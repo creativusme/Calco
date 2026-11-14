@@ -1,0 +1,38 @@
+[project]
+name = "calco-engine"
+version = "0.1.0"
+description = "Calco reconstruction engine: capture bundle -> scaled, textured 3D model"
+license = { text = "AGPL-3.0-only" }
+requires-python = ">=3.11"
+dependencies = [
+  "numpy",
+  "scipy",
+  "opencv-python",
+  "open3d",
+  "trimesh",
+  "networkx",  # trimesh 3MF export
+  "lxml",
+  "pycolmap",
+  "pillow",
+  "xatlas",
+  "fastapi",
+  "uvicorn[standard]",
+  "zeroconf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+masks = ["rembg", "onnxruntime-gpu"]
+
+[project.scripts]
+calco = "calco.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["calco*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

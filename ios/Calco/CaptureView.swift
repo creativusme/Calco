@@ -1,0 +1,214 @@
+import ARKit
+import SceneKit
+import SwiftUI
+
+/// The scanning screen: live camera with LiDAR mesh, crop box, coverage ring and shutter.
+struct CaptureView: View {
+    @StateObject private var capture: CaptureSession
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDiscard = false
+    @State private var finishing = false
+    let onFinished: () -> Void
+
+    init(mode: ScanMode, onFinished: @escaping () -> Void) {
+        _capture = StateObject(wrappedValue: CaptureSession(mode: mode))
+        self.onFinished = onFinished
+    }
+
+    var body: some View {
+        ZStack {
+            ARContainer(capture: capture).ignoresSafeArea()
+            VStack(spacing: 12) {
+                topBar
+                if let warning = capture.warning {
+                    Text(warning)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.red.opacity(0.85), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                Spacer()
+                Text(capture.hint)
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                if capture.mode != .space, !capture.isRecording {
+                    sizeControl
+                }
+                bottomBar
+            }
+            .padding()
+        }
+        .statusBarHidden()
+        .onAppear { capture.start() }
+        .onDisappear { capture.stop() }
+        .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+            Button("Discard \(capture.frameCount) photos", role: .destructive) {
+                capture.discard()
+                dismiss()
+            }
+            Button("Keep scanning", role: .cancel) {}
+        }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button {
+                if capture.frameCount > 0 { confirmDiscard = true } else { capture.discard(); dismiss() }
+            } label: {
+                Image(systemName: "xmark").font(.headline).frame(width: 40, height: 40)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel("Close")
+            Spacer()
+            HStack(spacing: 10) {
+                Label("\(capture.frameCount)", systemImage: "camera.fill").monospacedDigit()
+                if capture.mode != .space {
+                    CoverageRing(coverage: capture.coverage).frame(width: 26, height: 26)
+                    Text("\(capture.coveragePercent)%").monospacedDigit()
+                }
+                if !capture.hasLiDAR {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                        .accessibilityLabel("No LiDAR on this device")
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14).frame(height: 40)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .foregroundStyle(.white)
+    }
+
+    private var sizeControl: some View {
+        HStack(spacing: 12) {
+            Button("Place box") { capture.placeBox() }
+                .buttonStyle(.borderedProminent).tint(.orange)
+            if capture.cropBox != nil {
+                Slider(value: Binding(get: { Double(log10(capture.objectSize)) },
+                                      set: { capture.objectSize = Float(pow(10, $0)); capture.resizeBox() }),
+                       in: log10(0.03)...log10(3.0))
+                Text(Self.sizeLabel(capture.objectSize)).monospacedDigit().frame(width: 62, alignment: .trailing)
+            }
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .foregroundStyle(.white)
+    }
+
+    private var bottomBar: some View {
+        HStack {
+            Button { capture.takeManualPhoto() } label: {
+                Image(systemName: "camera").font(.title3).frame(width: 52, height: 52)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel("Take one photo")
+            Spacer()
+            Button { capture.toggleRecording() } label: {
+                ZStack {
+                    Circle().strokeBorder(.white, lineWidth: 4).frame(width: 78, height: 78)
+                    RoundedRectangle(cornerRadius: capture.isRecording ? 8 : 32)
+                        .fill(.red)
+                        .frame(width: capture.isRecording ? 32 : 64, height: capture.isRecording ? 32 : 64)
+                        .animation(.easeInOut(duration: 0.15), value: capture.isRecording)
+                }
+            }
+            .accessibilityLabel(capture.isRecording ? "Pause" : "Start")
+            Spacer()
+            Button {
+                finishing = true
+                capture.finish { saved in
+                    finishing = false
+                    if saved { onFinished() }
+                    dismiss()
+                }
+            } label: {
+                Text("Done").font(.headline).frame(width: 64, height: 52)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            .disabled(capture.frameCount < 3 || finishing)
+            .opacity(capture.frameCount < 3 ? 0.4 : 1)
+        }
+        .foregroundStyle(.white)
+    }
+
+    private static func sizeLabel(_ metres: Float) -> String {
+        metres < 1 ? String(format: "%.0f cm", metres * 100) : String(format: "%.1f m", metres)
+    }
+}
+
+/// Top-down ring: inner band = photos from the side, outer band = photos from above.
+struct CoverageRing: View {
+    let coverage: [Bool]
+
+    var body: some View {
+        Canvas { context, size in
+            let n = CaptureSession.sectors
+            let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+            let outer = min(size.width, size.height) / 2
+            for band in 0..<2 {
+                let radius = outer * (band == 0 ? 0.55 : 0.9)
+                for i in 0..<n {
+                    let a0 = Angle.radians(Double(i) / Double(n) * 2 * .pi)
+                    let a1 = Angle.radians((Double(i) + 0.8) / Double(n) * 2 * .pi)
+                    var path = Path()
+                    path.addArc(center: centre, radius: radius, startAngle: a0, endAngle: a1, clockwise: false)
+                    let done = coverage[band * n + i]
+                    let colour: Color = done ? Color.green : Color.white.opacity(0.3)
+                    context.stroke(path, with: .color(colour), lineWidth: outer * 0.22)
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// ARSCNView wrapper. Draws the LiDAR mesh as a faint wireframe so scanned surfaces are visible.
+struct ARContainer: UIViewRepresentable {
+    let capture: CaptureSession
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ARSCNView {
+        let view = ARSCNView(frame: .zero)
+        view.session = capture.session
+        view.delegate = context.coordinator
+        view.scene = SCNScene()
+        view.automaticallyUpdatesLighting = true
+        view.rendersMotionBlur = false
+        capture.sceneView = view
+        return view
+    }
+
+    func updateUIView(_ uiView: ARSCNView, context: Context) {}
+
+    final class Coordinator: NSObject, ARSCNViewDelegate {
+        func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
+            guard let mesh = anchor as? ARMeshAnchor else { return nil }
+            return SCNNode(geometry: Self.geometry(from: mesh.geometry))
+        }
+
+        func renderer(_ renderer: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
+            guard let mesh = anchor as? ARMeshAnchor else { return }
+            node.geometry = Self.geometry(from: mesh.geometry)
+        }
+
+        private static func geometry(from mesh: ARMeshGeometry) -> SCNGeometry {
+            let vertices = SCNGeometrySource(
+                buffer: mesh.vertices.buffer, vertexFormat: mesh.vertices.format, semantic: .vertex,
+                vertexCount: mesh.vertices.count, dataOffset: mesh.vertices.offset, dataStride: mesh.vertices.stride)
+            let faces = mesh.faces
+            let data = Data(bytes: faces.buffer.contents(), count: faces.buffer.length)
+            let element = SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: faces.count,
+                                             bytesPerIndex: faces.bytesPerIndex)
+            let geometry = SCNGeometry(sources: [vertices], elements: [element])
+            let material = SCNMaterial()
+            material.diffuse.contents = UIColor(white: 1, alpha: 0.22)
+            material.fillMode = .lines
+            material.lightingModel = .constant
+            geometry.materials = [material]
+            return geometry
+        }
+    }
+}
