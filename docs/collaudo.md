@@ -56,10 +56,12 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 - ☐ **D1** Oggetto al centro del tappetino. **New scan → Object**.
 - ☐ **D2** Inquadra l'oggetto, **Place box**: compare un cubo con spigoli spessi lime, sempre visibile anche dietro l'oggetto. Regola la dimensione col cursore finché lo contiene tutto con un po' di margine; **Move box** lo risposta dove stai puntando.
+- ☐ **D2c** Punta il **coperchio** di una scatola e premi **Place box**: la base del cubo deve andare sul **tavolo/pavimento** sotto la scatola, non sul coperchio.
 - ☐ **D2b** Le superfici già viste dal LiDAR si colorano di un velo lime trasparente: è l'anteprima di cosa è stato scansionato.
 - ☐ **D3** Tocca il pulsante rosso: parte lo scatto automatico. A ogni foto senti una **vibrazione** leggera e il bordo dello schermo lampeggia lime. Il contatore sale mentre ti muovi; **non** scatta se stai fermo.
 - ☐ **D3b** Scatta solo quando tieni il telefono quasi fermo (meno di ~5 cm/s e ~12°/s): così le foto non vengono mosse. Se vai veloce compare *Slow down*. Il ritmo giusto è: sposta, fermati un attimo, sposta.
-- ☐ **D3c** **Dettagli**: il pulsante con il fiore (macro) a sinistra mette in pausa il LiDAR e apre la fotocamera ravvicinata. Avvicinati a 3–15 cm da un foro, una filettatura, una scritta: in alto compare **Macro lens** quando il telefono passa da solo alla lente macro. Scatta da sola quando giri di qualche grado e stai fermo (o col pulsante bianco). **Done** torna alla scansione LiDAR.
+- ☐ **D3c** **Lente ravvicinata automatica**: durante la scansione avvicinati molto a un dettaglio (meno di ~20 cm). Dopo mezzo secondo senti una vibrazione e compare la scritta lime *Close-up lens · LiDAR paused*: ora scatta con la lente che mette a fuoco da vicino. Quando ti allontani torna da solo al LiDAR (altra vibrazione), con box e anello di copertura come prima. Il pulsante **LiDAR** in basso a sinistra fa tornare subito.
+- ☐ **D3d** Durante la parte ravvicinata il LiDAR è in pausa (limite di iPhone: LiDAR e lente macro non funzionano insieme). Gira attorno al dettaglio a piccoli passi; il PC colloca quelle foto usando le foto normali, quindi **fai sempre anche il giro normale attorno all'oggetto**.
 - ☐ **D4** Muoviti troppo in fretta: compare **Slow down** e smette di scattare. Rallenta: riprende.
 - ☐ **D5** Fai un giro completo ad altezza oggetto, poi un secondo giro dall'alto (~45°). L'anello di copertura in alto si riempie di verde (anello interno = giro basso, esterno = giro alto).
 - ☐ **D6** Puntini bianchi restano sospesi nei punti da cui hai scattato.
@@ -102,7 +104,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 | Caso | Come | Esito / note |
 |---|---|---|
-| ☐ Oggetto piccolo (2–5 cm) | **New scan → Macro**, pezzo sul tappetino **A5**, giri attorno a 5–10 cm: deve comparire *Macro lens*. 40–80 foto. Elabora **Medium**: la scala viene dal tappetino | |
+| ☐ Oggetto piccolo (2–5 cm) | Scansione **Object** normale sul tappetino **A5**: prima un giro a ~25 cm, poi avvicinati: deve partire da solo *Close-up lens*. Elabora **Medium**: la scala viene dal tappetino | |
 | ☐ Oggetto ~1 m (es. il tappo) | Senza tappetino o con più fogli attorno; box grande; 100–150 foto | |
 | ☐ Superficie lucida o nera | Prima senza niente, poi con spray opacizzante o pallini adesivi | |
 | ☐ Superficie liscia e uniforme | Pallini adesivi sparsi a caso | |

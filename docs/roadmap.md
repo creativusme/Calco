@@ -21,7 +21,7 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | Cable transfer (computer pulls via usbmuxd) | **Verified** by tests against a fake phone (pull, resume, no re-download of deleted scans). usbmuxd answers on the dev PC. **Never tried with the real phone** |
 | Desktop UI in the browser | **Verified** by hand: library, process, tabs, viewer, two-point measure, calibration, export |
 | Desktop Tauri shell | Written, **never compiled** (no Rust on the dev machine) |
-| iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.2 on the phone: capture works, one real capture reached the computer. 0.3 (pairing, Macro mode, Detail photos, stricter still-shutter) **not run yet** |
+| iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.2 and 0.3 on the phone (capture, pairing and transfer work). 0.4 (automatic close-up lens inside the normal scan, box on the support plane) **not run yet** |
 | Pairing (network code + password) | **Verified** by tests (401 without/with a wrong password, code round trip). Not tried with the phone |
 | Real capture #1 (pliers + glue stick on a glossy patterned tablecloth, 198 photos, no mat) | See "First real capture" below |
 
@@ -39,7 +39,11 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | Isolation | table left in (fitted plane ~1.7 mm below the real surface) | support surface re-found from the point density, cut sized to its noise: table removed, pliers and glue stick kept |
 | Medium total | 28 min | 8 min with texture, 6 min without (verified end to end) |
 
-Still missing on this capture: the metal jaws of the pliers (specular metal; needs matte spray) and fine detail on the handles.
+## Real capture #2 (charger on a box on a carpet: 4 LiDAR photos + 63 close-ups)
+
+Failed with 'mesh.ply: no triangles': all 67 photos were forced into one camera model although the close-ups came from the ultra-wide lens (14 mm equivalent; the close-up camera started at its widest lens instead of 1x). Only 2 photos were placed. Now: one camera per lens from EXIF, solve everything and align to the 4 LiDAR photos: 67/67 placed, 1.8 mm vs phone. The box was then cut away because the crop box base sat on the box lid (where the user aimed); the crop region is now extended downwards and the phone puts the base on the plane below.
+
+Still missing on capture #1: the metal jaws of the pliers (specular metal; needs matte spray) and fine detail on the handles.
 
 ## GPU
 
