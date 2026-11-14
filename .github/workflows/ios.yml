@@ -17,8 +17,18 @@ jobs:
       - name: Build (unsigned)
         run: |
           cd ios
-          xcodebuild -project Calco.xcodeproj -scheme Calco -configuration Release -sdk iphoneos \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          set -o pipefail
+          xcodebuild -project Calco.xcodeproj -scheme Calco -configuration Release -sdk iphoneos             -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build             2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Report compile errors as annotations
+        if: failure()
+        run: |
+          cd ios
+          grep -E "^/.*:[0-9]+:[0-9]+: error:" build.log | sort -u | head -30 | while IFS= read -r line; do
+            file=$(echo "$line" | cut -d: -f1 | sed "s#^$GITHUB_WORKSPACE/##")
+            echo "::error file=$file,line=$(echo "$line" | cut -d: -f2)::$(echo "$line" | cut -d: -f4-)"
+          done
+          grep -E "error:" build.log | grep -vE "^/" | sort -u | head -8 | while IFS= read -r line; do echo "::error::$line"; done
       - name: Package IPA for sideloading
         run: |
           cd ios/build/Build/Products/Release-iphoneos
