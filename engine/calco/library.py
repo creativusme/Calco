@@ -61,6 +61,19 @@ class Library:
                 self.delete_job(j["id"])
         shutil.rmtree(self.capture_path(cid), ignore_errors=True)
 
+    def complete_incoming(self, cid: str) -> dict:
+        """Validate a fully received bundle in incoming/ and move it into the library."""
+        src, dst = self.incoming / self.capture_path(cid).name, self.capture_path(cid)
+        if not src.exists():
+            raise FileNotFoundError(f"nothing received for capture {cid}")
+        bundle = load_bundle(src)  # raises BundleError when files are missing
+        for part in src.rglob("*.part"):
+            part.unlink()
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.move(str(src), str(dst))
+        return bundle.summary()
+
     def import_capture(self, src: Path) -> str:
         """Copy a bundle directory into the library. Returns the capture id."""
         b = load_bundle(src)

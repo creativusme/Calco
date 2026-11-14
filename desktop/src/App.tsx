@@ -124,6 +124,7 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
           <p className="muted small">Glue paper mats to something rigid and flat. A curled mat still gives the right scale, a flat one is more accurate.</p>
         </div>
       </details>
+      {info && <PhoneCard info={info} />}
       <div className="status-line">
         <span className={`pip ${offline ? "pip-failed" : "pip-done"}`} aria-hidden="true" />
         <span>{offline ? "Engine offline" : "Engine ready"}</span>
@@ -131,12 +132,82 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
       </div>
       {info && (
         <dl className="kv">
-          <dt>Phone</dt>
+          <dt>Wi-Fi address</dt>
           <dd className="mono">{info.addresses.length ? `${info.addresses[0]}:${info.port}` : "no network"}</dd>
           <dt>GPU</dt>
           <dd>{info.tools.gpu ? (info.tools.colmap_cuda ? "In use" : "Not used yet") : "None found"}</dd>
         </dl>
       )}
+    </div>
+  );
+}
+
+const LINK_LABEL = { cable: "Cable", wifi: "Wi-Fi", "wifi-sync": "Wi-Fi sync" } as const;
+
+/** How the phone is connected, what it is sending, and why Wi-Fi may not work. */
+function PhoneCard({ info }: { info: Info }) {
+  const p = info.phone;
+  const [help, setHelp] = useState(false);
+  const t = p.transfer;
+  const pct = t && t.total ? Math.round(((t.done ?? 0) / t.total) * 100) : null;
+  const wifiBlocked = info.network.checked && !info.network.ok;
+  return (
+    <section className={`phone-card ${p.connected ? "is-on" : ""}`} aria-live="polite">
+      <div className="phone-row">
+        <span className={`pip ${p.connected ? (t ? "pip-running" : "pip-done") : ""}`} aria-hidden="true" />
+        <strong className="phone-name">{p.connected ? p.name : "No phone connected"}</strong>
+        {p.connected && p.link && <span className="tag tag-mat">{LINK_LABEL[p.link]}</span>}
+      </div>
+      {p.connected && t && (
+        <>
+          <div className="muted small phone-line">
+            {t.capture ? `Receiving “${t.capture}”${t.count && t.count > 1 ? ` · ${t.index}/${t.count}` : ""}` : "Receiving a scan…"}
+            {pct != null && <span className="mono right">{pct}%</span>}
+          </div>
+          {pct != null && <div className="phone-bar"><div style={{ width: `${pct}%` }} /></div>}
+        </>
+      )}
+      {p.connected && !t && <div className="muted small">{p.error ? <span className="error-text">{p.error}</span> : "Up to date. New scans arrive by themselves."}</div>}
+      {!p.connected && (
+        <div className="muted small">
+          Open Calco on the iPhone, then plug in the cable{wifiBlocked ? "" : " or use the same Wi-Fi"}.
+          {p.usb_service === false && <span className="error-text"> Cable transfer needs Apple Devices or iTunes installed.</span>}
+        </div>
+      )}
+      {wifiBlocked && (
+        <button className="warn-line" onClick={() => setHelp(true)}>
+          <span aria-hidden="true">!</span> Wi-Fi transfer blocked by Windows · How to fix
+        </button>
+      )}
+      {help && <WifiHelp info={info} onClose={() => setHelp(false)} />}
+    </section>
+  );
+}
+
+function WifiHelp({ info, onClose }: { info: Info; onClose: () => void }) {
+  const cmd = "powershell -ExecutionPolicy Bypass -File tools\\allow-wifi.ps1";
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, [onClose]);
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog dialog-small" role="dialog" aria-modal="true" aria-label="Allow Wi-Fi transfers" onClick={(e) => e.stopPropagation()}>
+        <header><strong>Allow Wi-Fi Transfers</strong><button className="ghost icon" onClick={onClose} aria-label="Close"><span aria-hidden="true">×</span></button></header>
+        <div className="dialog-body">
+          <p>Windows is refusing connections from the phone:</p>
+          <ul>{(info.network.problems ?? []).map((x) => <li key={x}>{x}</li>)}</ul>
+          <p><strong>The USB cable always works</strong>, without changing anything. To use Wi-Fi as well, run this once:</p>
+          <ol>
+            <li>Start menu → type <em>PowerShell</em> → right-click → <em>Run as administrator</em>.</li>
+            <li>Go to the Calco folder (<code>cd</code> to where <code>Start Calco.cmd</code> is) and run:</li>
+          </ol>
+          <pre>{cmd}</pre>
+          <p className="muted small">It marks your network as Private, removes the rule that blocks Python and allows Calco on private networks only. Read <code>tools\allow-wifi.ps1</code> first if you like: it is short and commented.</p>
+          <button className="button" onClick={() => { api.recheckNetwork(); onClose(); }}>I Ran It · Check Again</button>
+        </div>
+      </div>
     </div>
   );
 }

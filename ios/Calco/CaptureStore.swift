@@ -26,12 +26,28 @@ final class CaptureStore: ObservableObject {
         root.appendingPathComponent("\(id).calco", isDirectory: true)
     }
 
+    /// A scan interrupted by a crash or by iOS killing the app keeps its ".recording" marker.
+    /// Nothing records at launch, so clear them: whatever was saved becomes a normal capture.
+    static func recoverInterrupted() {
+        let fm = FileManager.default
+        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where dir.pathExtension == "calco" {
+            let marker = dir.appendingPathComponent(".recording")
+            guard fm.fileExists(atPath: marker.path) else { continue }
+            if fm.fileExists(atPath: dir.appendingPathComponent("manifest.json").path) {
+                try? fm.removeItem(at: marker)
+            } else {
+                try? fm.removeItem(at: dir)  // not even one manifest written: nothing usable
+            }
+        }
+    }
+
     func reload() {
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: Self.root, includingPropertiesForKeys: nil)) ?? []
         let iso = ISO8601DateFormatter()
         var out: [CaptureSummary] = []
         for dir in dirs where dir.pathExtension == "calco" {
+            if fm.fileExists(atPath: dir.appendingPathComponent(".recording").path) { continue }
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("manifest.json")),
                   let m = try? JSONDecoder().decode(Manifest.self, from: data) else { continue }
             out.append(CaptureSummary(
@@ -43,9 +59,15 @@ final class CaptureStore: ObservableObject {
         captures = out.sorted { $0.created > $1.created }
     }
 
-    func delete(_ capture: CaptureSummary) {
-        try? FileManager.default.removeItem(at: capture.url)
+    func delete(_ ids: Set<String>) {
+        for capture in captures where ids.contains(capture.id) {
+            try? FileManager.default.removeItem(at: capture.url)
+        }
         reload()
+    }
+
+    func delete(_ capture: CaptureSummary) {
+        delete([capture.id])
     }
 
     func rename(_ capture: CaptureSummary, to name: String) {
@@ -64,6 +86,13 @@ final class CaptureStore: ObservableObject {
     func markUploaded(_ capture: CaptureSummary) {
         FileManager.default.createFile(atPath: capture.url.appendingPathComponent(".uploaded").path, contents: Data())
         reload()
+    }
+
+    var totalBytes: Int64 { captures.reduce(0) { $0 + $1.bytes } }
+
+    static var freeBytes: Int64 {
+        let values = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage ?? 0
     }
 
     static func size(of dir: URL) -> Int64 {

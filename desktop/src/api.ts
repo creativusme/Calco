@@ -69,6 +69,18 @@ export interface Info {
   tools: { openmvs: boolean; colmap_cuda: boolean; gpu: string | null; installing: boolean };
   presets: { quality: Quality[]; profiles: Profile[]; formats: string[]; units: string[] };
   demo_running: boolean;
+  phone: PhoneStatus;
+  network: { ok: boolean; checked: boolean; problems?: string[]; fix_script?: string };
+}
+
+export interface PhoneStatus {
+  connected: boolean;
+  link?: "cable" | "wifi" | "wifi-sync";
+  name?: string;
+  address?: string | null;
+  transfer?: { capture?: string; done?: number; total?: number; index?: number; count?: number; active?: boolean } | null;
+  error?: string | null;
+  usb_service: boolean | null;
 }
 
 export interface ExportResult { folder: string; files: { format: string; file: string; size: number }[] }
@@ -104,5 +116,6 @@ export const api = {
   matUrl: (size: string) => `${BASE}/api/mat.pdf?size=${size}`,
   mat3dUrl: (size: string) => `${BASE}/api/mat.zip?size=${size}`,
   demo: () => post<{ started: boolean }>("/api/demo"),
+  recheckNetwork: () => post("/api/network/recheck"),
   installTools: (what: "openmvs" | "colmap") => post<{ started: boolean }>(`/api/tools/install?what=${what}`),
 };

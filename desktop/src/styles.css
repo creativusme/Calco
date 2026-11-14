@@ -228,3 +228,19 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 14px; he
 .dialog pre { flex: 1; margin: 0; padding: 14px 16px; overflow: auto; white-space: pre-wrap; color: var(--muted); overscroll-behavior: contain; }
 
 @media (prefers-reduced-motion: reduce) { .pip-running, .step-running .step-bar { animation: none; } }
+
+/* ---------- phone connection */
+.phone-card { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--raised); }
+.phone-card.is-on { border-color: color-mix(in srgb, var(--ok) 55%, var(--line-strong)); }
+.phone-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.phone-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.phone-line { display: flex; gap: 8px; min-width: 0; }
+.phone-bar { height: 3px; background: var(--line); }
+.phone-bar div { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.warn-line { display: flex; align-items: center; gap: 6px; padding: 4px 0 0; color: var(--bad); font-size: 11.5px; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.warn-line span { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid currentColor; font-weight: 700; font-size: 10px; text-decoration: none; }
+.dialog-small { height: auto; max-height: 82vh; width: min(560px, 90vw); }
+.dialog-body { display: grid; gap: 10px; padding: 16px; overflow: auto; }
+.dialog-body ul, .dialog-body ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.dialog-body pre { margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: var(--r); white-space: pre-wrap; color: var(--accent-text); }
+.dialog-body .button { justify-self: start; }

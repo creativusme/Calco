@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, presets, tools
-from .bundle import BundleError, load_bundle
+from .bundle import BundleError
 from .export import export_model
 from .library import Library
 
@@ -52,11 +53,34 @@ def lan_addresses() -> list[str]:
     return sorted(out)
 
 
-def create_app(library: Library | None = None, ui_dir: Path | None = None) -> FastAPI:
+def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=None, net=None) -> FastAPI:
     lib = library or Library()
     app = FastAPI(title="Calco engine", version=__version__)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     busy = {"tools": False, "demo": False}
+    wifi_phone: dict = {}  # last request made by the phone over Wi-Fi
+
+    @app.middleware("http")
+    async def remember_phone(request: Request, call_next):
+        name = request.headers.get("x-calco-device")
+        if name:
+            wifi_phone.update(name=name, address=request.client.host if request.client else None, seen=time.time())
+            if request.url.path.startswith("/api/captures/"):
+                wifi_phone["uploading"] = time.time()
+        return await call_next(request)
+
+    def phone_status() -> dict:
+        """How the phone is connected right now: cable (or Wi-Fi sync) wins over plain Wi-Fi."""
+        u = usb.status() if usb else {"usb_service": None, "phone": None}
+        if u["phone"]:
+            p = u["phone"]
+            return {"connected": True, "link": "cable" if p["link"] == "usb" else "wifi-sync", "name": p["name"],
+                    "transfer": p["transfer"], "error": p["error"], "usb_service": u["usb_service"]}
+        if wifi_phone and time.time() - wifi_phone["seen"] < 10:
+            return {"connected": True, "link": "wifi", "name": wifi_phone["name"], "address": wifi_phone["address"],
+                    "transfer": {"active": True} if time.time() - wifi_phone.get("uploading", 0) < 5 else None,
+                    "error": None, "usb_service": u["usb_service"]}
+        return {"connected": False, "usb_service": u["usb_service"]}
 
     def job_or_404(jid: str) -> dict:
         try:
@@ -80,7 +104,19 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None) -> Fa
         return {"name": "Calco", "version": __version__, "library": str(lib.root), "port": PORT,
                 "addresses": lan_addresses(), "hostname": socket.gethostname(),
                 "tools": {**tools.status(), "installing": busy["tools"]}, "presets": presets.describe(),
-                "demo_running": busy["demo"]}
+                "demo_running": busy["demo"], "phone": phone_status(),
+                "network": net.result if net else {"ok": True, "checked": False}}
+
+    @app.get("/api/hello")
+    def hello():
+        """What the phone calls every few seconds to show 'Connected' and find this computer's name."""
+        return {"name": "Calco", "version": __version__, "hostname": socket.gethostname()}
+
+    @app.post("/api/network/recheck")
+    def recheck_network():
+        if net:
+            net.recheck()
+        return {"ok": True}
 
     @app.post("/api/tools/install")
     def install_tools(what: str = "openmvs"):
@@ -184,17 +220,14 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None) -> Fa
 
     @app.post("/api/captures/{cid}/complete")
     def complete(cid: str):
-        src, dst = capture_dir(cid, incoming=True), capture_dir(cid)
-        if not src.exists():
-            raise HTTPException(404, "nothing uploaded for this capture")
+        capture_dir(cid)
         try:
-            bundle = load_bundle(src)
+            summary = lib.complete_incoming(cid)
+        except FileNotFoundError as e:
+            raise HTTPException(404, "nothing uploaded for this capture") from e
         except BundleError as e:
             raise HTTPException(422, str(e)) from e
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.move(str(src), str(dst))
-        return {"ok": True, "capture": bundle.summary()}
+        return {"ok": True, "capture": summary}
 
     # ---- jobs
     @app.get("/api/jobs")
@@ -312,7 +345,11 @@ def serve(host: str = "0.0.0.0", port: int = PORT, library: Path | None = None) 
     import uvicorn
 
     ui = Path(__file__).resolve().parents[2] / "desktop" / "dist"
-    app = create_app(Library(library), ui)
+    from .netcheck import NetWatch
+    from .usb import UsbBridge
+
+    lib = Library(library)
+    app = create_app(lib, ui, usb=UsbBridge(lib).start(), net=NetWatch().start())
     zc = advertise(port)
     print(f"Calco engine {__version__} on http://localhost:{port}  (phone: {', '.join(lan_addresses()) or 'no LAN address'})")
     try:

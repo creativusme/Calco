@@ -16,6 +16,8 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published var cropBox: CropBox?
     @Published var objectSize: Float
     @Published var hasLiDAR = false
+    /// Increments on every saved photo; the view flashes the screen edge when it changes.
+    @Published var shutterCount = 0
 
     static let sectors = 24
 
@@ -39,6 +41,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     private var focus: simd_float3?
     private var boxNode: SCNNode?
     private let created = Date()
+    private let haptic = UIImpactFeedbackGenerator(style: .rigid)
 
     init(mode: ScanMode) {
         self.mode = mode
@@ -56,6 +59,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         let fm = FileManager.default
         try? fm.createDirectory(at: bundleURL.appendingPathComponent("frames"), withIntermediateDirectories: true)
         try? fm.createDirectory(at: bundleURL.appendingPathComponent("depth"), withIntermediateDirectories: true)
+        // while this marker exists the scan is incomplete: not listed, not sent to the computer
+        fm.createFile(atPath: bundleURL.appendingPathComponent(".recording").path, contents: Data())
+        haptic.prepare()
 
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
@@ -92,6 +98,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
             if ok {
                 writeManifest()
                 writePreview()
+                try? FileManager.default.removeItem(at: bundleURL.appendingPathComponent(".recording"))
             } else {
                 try? FileManager.default.removeItem(at: bundleURL)
             }
@@ -140,17 +147,66 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         for p in shotPositions { markCoverage(position: p) }
 
         boxNode?.removeFromParentNode()
-        let geometry = SCNBox(width: CGFloat(s), height: CGFloat(s), length: CGFloat(s), chamferRadius: 0)
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor(red: 0.92, green: 0.64, blue: 0.36, alpha: 1)
-        material.fillMode = .lines
-        material.lightingModel = .constant
-        material.isDoubleSided = true
-        geometry.materials = [material]
-        let node = SCNNode(geometry: geometry)
-        node.simdPosition = simd_float3(base.x, base.y + s / 2, base.z)
-        sceneView?.scene.rootNode.addChildNode(node)
-        boxNode = node
+        boxNode = Self.makeBox(size: s)
+        boxNode?.simdPosition = simd_float3(base.x, base.y + s / 2, base.z)
+        if let boxNode { sceneView?.scene.rootNode.addChildNode(boxNode) }
+    }
+
+    /// Crop box drawn like a viewfinder: thick bright edges, corner brackets, a faint fill.
+    /// Drawn on top of everything so it never disappears into the object.
+    private static func makeBox(size s: Float) -> SCNNode {
+        let root = SCNNode()
+        let accent = UIColor(red: 0.82, green: 0.95, blue: 0.29, alpha: 1)
+        func material(_ color: UIColor) -> SCNMaterial {
+            let m = SCNMaterial()
+            m.diffuse.contents = color
+            m.lightingModel = .constant
+            m.isDoubleSided = true
+            m.readsFromDepthBuffer = false
+            m.writesToDepthBuffer = false
+            return m
+        }
+        let edgeMaterial = material(accent.withAlphaComponent(0.9))
+        let radius = CGFloat(max(0.0015, s * 0.006))
+        let h = s / 2
+        let corners: [simd_float3] = [
+            [-h, -h, -h], [h, -h, -h], [h, -h, h], [-h, -h, h],
+            [-h, h, -h], [h, h, -h], [h, h, h], [-h, h, h],
+        ]
+        let edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
+        for (a, b) in edges {
+            let p0 = corners[a], p1 = corners[b]
+            let cylinder = SCNCylinder(radius: radius, height: CGFloat(simd_distance(p0, p1)))
+            cylinder.radialSegmentCount = 8
+            cylinder.materials = [edgeMaterial]
+            let node = SCNNode(geometry: cylinder)
+            node.simdPosition = (p0 + p1) / 2
+            // SCNCylinder stands along +Y: rotate it onto the edge direction
+            let dir = simd_normalize(p1 - p0)
+            let up = simd_float3(0, 1, 0)
+            let axis = simd_cross(up, dir)
+            if simd_length(axis) > 1e-4 {
+                node.simdOrientation = simd_quatf(angle: acos(simd_clamp(simd_dot(up, dir), -1, 1)), axis: simd_normalize(axis))
+            }
+            node.renderingOrder = 100
+            root.addChildNode(node)
+        }
+        for c in corners {
+            let dot = SCNSphere(radius: radius * 2.2)
+            dot.materials = [material(accent)]
+            let node = SCNNode(geometry: dot)
+            node.simdPosition = c
+            node.renderingOrder = 101
+            root.addChildNode(node)
+        }
+        let fill = SCNBox(width: CGFloat(s), height: CGFloat(s), length: CGFloat(s), chamferRadius: 0)
+        let fillMaterial = material(accent.withAlphaComponent(0.06))
+        fillMaterial.readsFromDepthBuffer = true
+        fill.materials = [fillMaterial]
+        let fillNode = SCNNode(geometry: fill)
+        fillNode.renderingOrder = 99
+        root.addChildNode(fillNode)
+        return root
     }
 
     // MARK: ARSessionDelegate
@@ -259,6 +315,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
                 let count = records.count
                 DispatchQueue.main.async {
                     self.frameCount = count
+                    self.shutterCount += 1
+                    self.haptic.impactOccurred(intensity: 0.7)
+                    self.haptic.prepare()
                     self.shotPositions.append(position)
                     self.markCoverage(position: position)
                     self.addMarker(at: position)

@@ -8,6 +8,7 @@ struct CaptureView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDiscard = false
     @State private var finishing = false
+    @State private var flash = false
     let onFinished: () -> Void
 
     init(mode: ScanMode, onFinished: @escaping () -> Void) {
@@ -39,6 +40,18 @@ struct CaptureView: View {
                 bottomBar
             }
             .padding()
+        }
+        .overlay {
+            // a quick bright frame around the screen each time a photo is taken
+            RoundedRectangle(cornerRadius: 44)
+                .strokeBorder(Color.calcoAccent, lineWidth: 10)
+                .opacity(flash ? 0.9 : 0)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+        .onChange(of: capture.shutterCount) { _, _ in
+            flash = true
+            withAnimation(.easeOut(duration: 0.35)) { flash = false }
         }
         .statusBarHidden()
         .onAppear { capture.start() }
@@ -82,8 +95,8 @@ struct CaptureView: View {
 
     private var sizeControl: some View {
         HStack(spacing: 12) {
-            Button("Place box") { capture.placeBox() }
-                .buttonStyle(.borderedProminent).tint(.orange)
+            Button(capture.cropBox == nil ? "Place box" : "Move box") { capture.placeBox() }
+                .buttonStyle(.borderedProminent).tint(.calcoAccent).foregroundStyle(.black)
             if capture.cropBox != nil {
                 Slider(value: Binding(get: { Double(log10(capture.objectSize)) },
                                       set: { capture.objectSize = Float(pow(10, $0)); capture.resizeBox() }),
@@ -186,12 +199,38 @@ struct ARContainer: UIViewRepresentable {
     final class Coordinator: NSObject, ARSCNViewDelegate {
         func renderer(_ renderer: SCNSceneRenderer, nodeFor anchor: ARAnchor) -> SCNNode? {
             guard let mesh = anchor as? ARMeshAnchor else { return nil }
-            return SCNNode(geometry: Self.geometry(from: mesh.geometry))
+            return Self.node(for: mesh.geometry)
         }
 
         func renderer(_ renderer: SCNSceneRenderer, didUpdate node: SCNNode, for anchor: ARAnchor) {
             guard let mesh = anchor as? ARMeshAnchor else { return }
-            node.geometry = Self.geometry(from: mesh.geometry)
+            let fresh = Self.node(for: mesh.geometry)
+            node.geometry = fresh.geometry
+            node.childNodes.forEach { $0.removeFromParentNode() }
+            fresh.childNodes.forEach { node.addChildNode($0) }
+        }
+
+        /// Translucent shaded surface plus a faint wireframe: a live preview of what has been scanned
+        /// that never hides the camera image.
+        private static func node(for mesh: ARMeshGeometry) -> SCNNode {
+            let surface = Self.geometry(from: mesh)
+            let fill = SCNMaterial()
+            fill.diffuse.contents = UIColor(red: 0.82, green: 0.95, blue: 0.29, alpha: 0.16)
+            fill.lightingModel = .lambert
+            fill.isDoubleSided = true
+            fill.writesToDepthBuffer = false
+            surface.materials = [fill]
+
+            let wire = Self.geometry(from: mesh)
+            let line = SCNMaterial()
+            line.diffuse.contents = UIColor(white: 1, alpha: 0.18)
+            line.fillMode = .lines
+            line.lightingModel = .constant
+            wire.materials = [line]
+
+            let node = SCNNode(geometry: surface)
+            node.addChildNode(SCNNode(geometry: wire))
+            return node
         }
 
         private static func geometry(from mesh: ARMeshGeometry) -> SCNGeometry {
@@ -202,13 +241,10 @@ struct ARContainer: UIViewRepresentable {
             let data = Data(bytes: faces.buffer.contents(), count: faces.buffer.length)
             let element = SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: faces.count,
                                              bytesPerIndex: faces.bytesPerIndex)
-            let geometry = SCNGeometry(sources: [vertices], elements: [element])
-            let material = SCNMaterial()
-            material.diffuse.contents = UIColor(white: 1, alpha: 0.22)
-            material.fillMode = .lines
-            material.lightingModel = .constant
-            geometry.materials = [material]
-            return geometry
+            let normals = SCNGeometrySource(
+                buffer: mesh.normals.buffer, vertexFormat: mesh.normals.format, semantic: .normal,
+                vertexCount: mesh.normals.count, dataOffset: mesh.normals.offset, dataStride: mesh.normals.stride)
+            return SCNGeometry(sources: [vertices, normals], elements: [element])
         }
     }
 }
