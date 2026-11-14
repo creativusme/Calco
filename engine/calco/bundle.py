@@ -88,6 +88,18 @@ class CropBox:
         half = self.size / 2 + margin
         return (np.abs(x) <= half[0]) & (np.abs(d[:, 1]) <= half[1]) & (np.abs(z) <= half[2])
 
+    def extended_down(self, amount: float) -> "CropBox":
+        """The same box reaching `amount` metres further down (world -Y).
+
+        On the phone the box sits where the user aims; aiming at the top of an object puts the
+        box base on that top. Extending it downwards lets the engine find the real support surface.
+        """
+        size = self.size.copy()
+        size[1] += amount
+        centre = self.center.copy()
+        centre[1] -= amount / 2
+        return CropBox(centre, size, self.yaw)
+
     def corners(self) -> np.ndarray:
         h = self.size / 2
         signs = np.array([[i, j, k] for i in (-1, 1) for j in (-1, 1) for k in (-1, 1)], float)

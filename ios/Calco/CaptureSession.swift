@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 import SceneKit
 import UIKit
@@ -18,6 +19,13 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published var hasLiDAR = false
     /// Increments on every saved photo; the view flashes the screen edge when it changes.
     @Published var shutterCount = 0
+    /// True while the phone is too close for the main lens: LiDAR paused, close-up camera on.
+    @Published private(set) var closeUp = false
+    @Published private(set) var closeUpSince = Date.distantPast
+    /// Bumped by the shutter button so the close-up camera takes one photo.
+    @Published private(set) var manualShot = 0
+    /// Bumped to ask the close-up layer to hand back to LiDAR.
+    @Published private(set) var leaveCloseUpRequest = 0
 
     static let sectors = 24
 
@@ -40,6 +48,13 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     private var speed: Float = 0  // m/s, smoothed
     private var turnRate: Float = 0  // degrees/s, smoothed
     private var arConfig: ARWorldTrackingConfiguration?
+    private var nearSince: TimeInterval?
+    private var lastLensSwitch = Date.distantPast
+    /// Closer than this the main lens cannot focus (its minimum focus distance, plus a margin).
+    private let nearLimit: Float = {
+        let mm = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)?.minimumFocusDistance ?? -1
+        return mm > 0 ? max(0.10, Float(mm) / 1000 * 1.1) : 0.2
+    }()
     private var focus: simd_float3?
     private var boxNode: SCNNode?
     private let created = Date()
@@ -65,11 +80,6 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         fm.createFile(atPath: bundleURL.appendingPathComponent(".recording").path, contents: Data())
         haptic.prepare()
         UIApplication.shared.isIdleTimerDisabled = true
-        if mode == .macro {
-            hint = "Hold the part 3–15 cm away"
-            return  // close-up mode: AVFoundation camera, no ARKit
-        }
-
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
         config.isAutoFocusEnabled = true
@@ -87,15 +97,33 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
     }
 
-    /// The close-up camera cannot run while ARKit owns the camera: pause tracking meanwhile.
-    func pauseForDetails() {
-        isRecording = false
+    /// Too close for the main lens: pause ARKit (it owns the main camera) and let the close-up
+    /// camera take over. Called automatically from the LiDAR distance, or from the button.
+    func enterCloseUp() {
+        guard !closeUp, arConfig != nil else { return }
+        lastLensSwitch = Date()
+        nearSince = nil
         session.pause()
+        closeUpSince = Date()
+        closeUp = true
+        haptic.impactOccurred(intensity: 1)
     }
 
-    /// Resume without resetting: ARKit relocalizes against the map it already has.
-    func resumeAfterDetails() {
+    /// Back to LiDAR without resetting: ARKit relocalizes against the map it already has, so the
+    /// box and the coverage stay where they were.
+    func leaveCloseUp() {
+        guard closeUp else { return }
+        lastLensSwitch = Date()
+        closeUp = false
         if let arConfig { session.run(arConfig) }
+        hint = "Back to LiDAR: point at the object for a moment while tracking resumes"
+        haptic.impactOccurred(intensity: 1)
+    }
+
+    func requestLeaveCloseUp() { leaveCloseUpRequest += 1 }
+
+    func shootOnce() {
+        if closeUp { manualShot += 1 } else { takeManualPhoto() }
     }
 
     /// A close-up photo from the macro camera: no pose, no depth, intrinsics unknown (0) so the
@@ -170,9 +198,24 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         } else if let frame = session.currentFrame, let p = Self.centreDepthPoint(frame) {
             hit = p
         }
-        guard let base = hit else {
+        guard var base = hit else {
             warning = "Could not find a surface here. Move a little and try again."
             return
+        }
+        // Aiming at the top of an object would put the box base on that top. Use the horizontal
+        // surface the object stands on instead: the highest detected plane below the aimed point.
+        if let frame = session.currentFrame {
+            let supports = frame.anchors.compactMap { $0 as? ARPlaneAnchor }.filter { anchor in
+                guard anchor.alignment == .horizontal else { return false }
+                let p = simd_make_float3(anchor.transform.columns.3)
+                let reach = max(anchor.planeExtent.width, anchor.planeExtent.height) / 2 + 0.3
+                return p.y < base.y - 0.01 && p.y > base.y - 1.0 && simd_distance(simd_float2(p.x, p.z), simd_float2(base.x, base.z)) < reach
+            }
+            if let support = supports.map({ $0.transform.columns.3.y }).max() {
+                let height = base.y - support
+                base.y = support
+                objectSize = max(objectSize, min(3, height * 1.4))
+            }
         }
         warning = nil
         focus = base
@@ -271,6 +314,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
 
         let tracking = Self.trackingProblem(frame.camera.trackingState)
         updateGuidance(frame: frame, tracking: tracking)
+        watchDistance(frame: frame, tracking: tracking)
 
         guard isRecording, !inFlight, tracking == nil, speed < 0.05, turnRate < 12 else { return }
         if let last = lastShot {
@@ -510,6 +554,42 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// World position of what is at the centre of the image, from LiDAR depth.
+    /// Switch to the close-up lens when the object in the middle of the view stays closer than the
+    /// main lens can focus for half a second (not right after a switch, to avoid flip-flopping).
+    private func watchDistance(frame: ARFrame, tracking: String?) {
+        guard !closeUp, isRecording, tracking == nil, Date().timeIntervalSince(lastLensSwitch) > 2.5,
+              let d = Self.centreDepth(frame) else {
+            nearSince = nil
+            return
+        }
+        if d < nearLimit {
+            if nearSince == nil { nearSince = frame.timestamp }
+            if let since = nearSince, frame.timestamp - since > 0.5 { enterCloseUp() }
+        } else {
+            nearSince = nil
+        }
+    }
+
+    /// Median LiDAR distance over the central part of the view, in metres.
+    private static func centreDepth(_ frame: ARFrame) -> Float? {
+        guard let map = frame.sceneDepth?.depthMap else { return nil }
+        CVPixelBufferLockBaseAddress(map, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
+        let w = CVPixelBufferGetWidth(map), h = CVPixelBufferGetHeight(map)
+        let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
+        var values: [Float] = []
+        for y in Swift.stride(from: h * 2 / 5, to: h * 3 / 5, by: 2) {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: Float32.self)
+            for x in Swift.stride(from: w * 2 / 5, to: w * 3 / 5, by: 2) where row[x].isFinite && row[x] > 0.02 {
+                values.append(row[x])
+            }
+        }
+        guard values.count > 20 else { return nil }
+        values.sort()
+        return values[values.count / 2]
+    }
+
     private static func centreDepthPoint(_ frame: ARFrame) -> simd_float3? {
         guard let map = frame.sceneDepth?.depthMap else { return nil }
         CVPixelBufferLockBaseAddress(map, .readOnly)

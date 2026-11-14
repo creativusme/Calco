@@ -67,7 +67,9 @@ def plan(bundle: Bundle, options: Options) -> dict:
         method = quality.method
     if method == "lidar" and not (bundle.has_depth and bundle.has_poses):
         method = "photo"
-        notes.append("No LiDAR data in this capture: using photogrammetry.")
+        posed = sum(f.pose is not None for f in bundle.frames)
+        notes.append("Most photos are close-ups without LiDAR: using photogrammetry." if bundle.has_depth and posed
+                     else "No LiDAR data in this capture: using photogrammetry.")
     if method == "photo" and not tools.have_openmvs():
         if bundle.has_depth and bundle.has_poses:
             method = "lidar"
@@ -336,7 +338,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             job.done()
         else:
             views = views_from_bundle(bundle)
-        metric = bundle.has_poses and (sfm is None or sfm.aligned)
+        metric = sfm.aligned if sfm is not None else bundle.has_poses
 
         # ---- scale reference
         job.start("scale")
@@ -350,7 +352,14 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
 
             mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu, scores)
             report["compute"]["dense"] = dense_on
-            mesh = Mesh.read(mesh_path)
+            try:
+                mesh = Mesh.read(mesh_path)
+            except RuntimeError:
+                mesh = Mesh(np.zeros((0, 3)), np.zeros((0, 3), int))
+            if len(mesh.f) < 200:
+                raise RuntimeError("The dense reconstruction found almost no surface. The photos overlap too little "
+                                   "or the object has no texture (plain, shiny or transparent): re-shoot with more "
+                                   "photos and small steps, or use matte spray.")
         else:
             from .tsdf import fuse_depth
 
@@ -359,6 +368,8 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         job.done()
 
         # ---- model frame
+        # the box base may sit on the object's top (where the user aimed): look below it too
+        crop = bundle.crop_box.extended_down(float(bundle.crop_box.size.max())) if bundle.crop_box is not None else None
         cut = 0.0012 if photo else 0.006  # metres above the support plane that are discarded
         if mat is not None:
             frame = ModelFrame(mat.transform, "mat", True, mat)
@@ -372,8 +383,8 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             up = np.array([0.0, 1.0, 0.0]) if metric else np.mean([v.up for v in views], axis=0)
             up = up / np.linalg.norm(up)
             roi = mesh
-            if p["isolate"] and bundle.crop_box is not None and metric:
-                roi = mesh.select_vertices(bundle.crop_box.contains(mesh.v, margin=0.05))
+            if p["isolate"] and crop is not None and metric:
+                roi = mesh.select_vertices(crop.contains(mesh.v, margin=0.05))
             frame = _frame_from_plane(roi if len(roi.f) else mesh, up, 2.5 * cut, metric)
             if not metric:
                 report["warnings"].append("No scale reference (no LiDAR poses, no scan mat): the model is not to "
@@ -385,7 +396,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         # ---- isolate object
         if p["isolate"]:
             job.start("cleanup")
-            mesh = _isolate(mesh, frame, bundle.crop_box if metric else None, views, cut,
+            mesh = _isolate(mesh, frame, crop if metric else None, views, cut,
                             options.close_bottom, job)
             job.progress(0.6, "Simplifying")
             mesh = meshops.decimate(mesh, quality.target_faces)

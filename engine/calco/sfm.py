@@ -54,6 +54,18 @@ def _pose_pairs(bundle: Bundle, neighbours: int = 16) -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
+def _exif_focal(path: Path) -> float | None:
+    """Focal length in mm from the photo's EXIF data (tells the phone's lenses apart)."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            value = im.getexif().get_ifd(0x8769).get(37386)  # Exif IFD, FocalLength
+        return round(float(value), 2) if value else None
+    except (OSError, ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
 def _open_db(path: Path):
     return pycolmap.Database.open(str(path)) if hasattr(pycolmap.Database, "open") else pycolmap.Database(str(path))
 
@@ -110,31 +122,48 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     names = [f.image.name for f in bundle.frames]
     warnings: list[str] = []
 
-    single = len({(f.width, f.height) for f in bundle.frames}) == 1
-    fx = float(np.median([f.intrinsics[0] for f in bundle.frames]))
-    fy = float(np.median([f.intrinsics[1] for f in bundle.frames]))
-    cx, cy = bundle.frames[0].intrinsics[2:]
-    known = single and fx > 0
+    # Photos with a phone pose share the phone's calibrated main camera. Close-up photos have
+    # no pose and may come from another lens (the phone switches lenses by itself): one camera
+    # model per lens, read from the photo's EXIF focal length, refined by bundle adjustment.
+    posed = [f for f in bundle.frames if f.pose is not None]
+    free = [f for f in bundle.frames if f.pose is None]
+    groups: list[tuple[list[str], str, str | None]] = []  # (image names, camera model, params)
+    if posed:
+        fx = float(np.median([f.intrinsics[0] for f in posed]))
+        fy = float(np.median([f.intrinsics[1] for f in posed]))
+        cx, cy = posed[0].intrinsics[2:]
+        sizes = {(f.width, f.height) for f in posed}
+        known = len(sizes) == 1 and fx > 0
+        groups.append(([f.image.name for f in posed], "SIMPLE_RADIAL", f"{(fx + fy) / 2},{cx},{cy},0" if known else None))
+    lenses: dict[tuple, list[str]] = {}
+    for f in free:
+        lenses.setdefault((_exif_focal(f.image), f.width, f.height), []).append(f.image.name)
+    for (focal, _, _), group in sorted(lenses.items(), key=lambda kv: -len(kv[1])):
+        groups.append((group, "RADIAL", None))  # wide lenses need two distortion terms
+        log(f"{len(group)} close-up photos from the {focal or '?'} mm lens")
+    use_poses = len(posed) >= 3
     pairs_file = None
-    if bundle.has_poses:
+    if use_poses:
         pairs_file = sfm_dir / "pairs.txt"
         pairs = _pose_pairs(bundle)
         pairs_file.write_text("\n".join(f"{a} {b}" for a, b in pairs), encoding="utf-8")
-        log(f"Matching {len(pairs)} pose-selected pairs (exhaustive would be {len(names) * (len(names) - 1) // 2})")
+        log(f"Matching {len(pairs)} selected pairs (exhaustive would be {len(names) * (len(names) - 1) // 2})")
 
     def on_gpu() -> None:
         """Features and matching with the CUDA build of COLMAP (same database format as pycolmap)."""
         exe = tools.colmap_bin()
-        (sfm_dir / "images.txt").write_text("\n".join(names), encoding="utf-8")
-        args = ["feature_extractor", "--database_path", db, "--image_path", image_dir,
-                "--image_list_path", sfm_dir / "images.txt", "--ImageReader.single_camera", int(single),
-                "--FeatureExtraction.use_gpu", 1, "--FeatureExtraction.max_image_size", quality.sfm_image_size,
-                "--SiftExtraction.max_num_features", quality.sfm_features]
-        if known:
-            args += ["--ImageReader.camera_model", "SIMPLE_RADIAL",
-                     "--ImageReader.camera_params", f"{(fx + fy) / 2},{cx},{cy},0"]
         progress(0.02, "Extracting features (GPU)")
-        tools.run_tool(exe, args, sfm_dir, log)
+        for i, (group, model, params) in enumerate(groups):
+            listing = sfm_dir / f"images_{i}.txt"
+            listing.write_text("\n".join(group), encoding="utf-8")
+            args = ["feature_extractor", "--database_path", db, "--image_path", image_dir,
+                    "--image_list_path", listing, "--ImageReader.single_camera", 1,
+                    "--ImageReader.camera_model", model,
+                    "--FeatureExtraction.use_gpu", 1, "--FeatureExtraction.max_image_size", quality.sfm_image_size,
+                    "--SiftExtraction.max_num_features", quality.sfm_features]
+            if params:
+                args += ["--ImageReader.camera_params", params]
+            tools.run_tool(exe, args, sfm_dir, log)
         progress(0.3, "Matching features (GPU)")
         if pairs_file:
             tools.run_tool(exe, ["matches_importer", "--database_path", db, "--match_list_path", pairs_file,
@@ -147,17 +176,17 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
                                  "--SequentialMatching.overlap", 20], sfm_dir, log)
 
     def on_cpu() -> None:
-        reader = pycolmap.ImageReaderOptions()
-        if known:
-            reader.camera_model = "SIMPLE_RADIAL"
-            reader.camera_params = f"{(fx + fy) / 2},{cx},{cy},0"
         extraction = pycolmap.FeatureExtractionOptions()
         extraction.max_image_size = quality.sfm_image_size
         extraction.sift.max_num_features = quality.sfm_features
         progress(0.02, "Extracting features")
-        pycolmap.extract_features(db, image_dir, image_names=names,
-                                  camera_mode=pycolmap.CameraMode.SINGLE if single else pycolmap.CameraMode.AUTO,
-                                  reader_options=reader, extraction_options=extraction)
+        for group, model, params in groups:
+            reader = pycolmap.ImageReaderOptions()
+            reader.camera_model = model
+            if params:
+                reader.camera_params = params
+            pycolmap.extract_features(db, image_dir, image_names=group, camera_mode=pycolmap.CameraMode.SINGLE,
+                                      reader_options=reader, extraction_options=extraction)
         progress(0.35, "Matching features")
         if pairs_file:
             pairing = pycolmap.ImportedPairingOptions()
@@ -181,44 +210,53 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     if computed_on == "cpu":
         on_cpu()
 
-    # --- cameras: start from the phone's poses when there are any, else solve from the photos
+    # --- cameras: start from the phone's poses when there are enough, else solve from the photos
     progress(0.6, "Solving cameras")
     opts = pycolmap.IncrementalPipelineOptions()
     opts.multiple_models = False
     opts.ba_refine_principal_point = False
     rec = None
-    if bundle.has_poses:
+    if len(posed) >= 8:
         try:
             rec = _known_pose_model(bundle, db, image_dir, sfm_dir, log)
         except Exception as e:  # any problem: the classic path below still works
             log(f"Phone-pose triangulation failed ({e}); solving the cameras from the photos instead")
             rec = None
-        unposed = sum(f.pose is None for f in bundle.frames)
-        if rec is not None and unposed:
-            # detail / macro photos have no phone pose: register them against the fixed model
-            progress(0.75, f"Placing {unposed} detail photos")
+        if rec is not None and free:
+            # close-up photos have no phone pose: register them against the fixed model
+            progress(0.75, f"Placing {len(free)} close-up photos")
             seed = sfm_dir / "seed"
             seed.mkdir(exist_ok=True)
             rec.write(seed)
             opts.fix_existing_frames = True
             more = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts, input_path=seed)
+            opts.fix_existing_frames = False
             if more:
                 rec = max(more.values(), key=lambda r: r.num_reg_images())
-            opts.fix_existing_frames = False
+            placed = sum(1 for im in rec.images.values() if im.has_pose and im.name in {f.image.name for f in free})
+            log(f"Placed {placed} of {len(free)} close-up photos on the phone-pose model")
+            if placed < 0.5 * len(free) and len(free) > len(posed):
+                log("Most close-ups did not fit the phone-pose model: solving all photos together instead")
+                rec = None
     if rec is None:
         models = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts)
         if not models:
             raise RuntimeError("Photo alignment failed: not enough overlap or texture between the photos. "
-                               "Try the Draft (LiDAR) preset, or re-shoot with more overlap.")
+                               "Re-shoot with more overlap (each part of the object in at least 3 photos).")
         rec = max(models.values(), key=lambda r: r.num_reg_images())
     registered = rec.num_reg_images()
+    if registered < max(3, 0.3 * len(names)):
+        raise RuntimeError(
+            f"Only {registered} of {len(names)} photos could be placed, too few to build the object. "
+            "Usually the photos overlap too little, are blurred, or the object has no texture (plain, shiny "
+            "or transparent). Take more photos with small steps between them.")
     if registered < 0.6 * len(names):
         warnings.append(f"Only {registered} of {len(names)} photos could be aligned.")
     log(f"Aligned {registered}/{len(names)} photos, reprojection error {rec.compute_mean_reprojection_error():.2f} px")
 
     # --- put the model in the phone's metric frame
     aligned, pose_rms = False, None
-    if bundle.has_poses:
+    if use_poses:
         by_name = {f.image.name: f for f in bundle.frames if f.pose is not None}
         tgt_names = list(by_name)
         tgt = np.array([by_name[n].center for n in tgt_names])

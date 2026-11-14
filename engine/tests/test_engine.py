@@ -193,3 +193,23 @@ def test_printable_mat_files():
     pattern = trimesh.load(io.BytesIO(files["pattern.stl"]), file_type="stl")
     assert np.allclose(base.extents, [148, 210, 2])
     assert pattern.bounds[0][2] < 2.0 < pattern.bounds[1][2] and pattern.extents[0] < 148
+
+
+def test_mixed_phone_and_closeup_photos(tmp_path):
+    """Some photos with phone poses, some close-ups without (other lens, unknown intrinsics):
+    every photo must be placed and the model must still be in the phone's metric frame."""
+    import json as _json
+
+    from calco.presets import QUALITY
+    from calco.sfm import run_sfm
+
+    cap = make_synthetic_bundle(tmp_path / "mixed.calco", views_per_ring=10, image_size=(800, 600), seed=3)
+    m = _json.loads((cap / "manifest.json").read_text())
+    for f in m["frames"][::4]:  # a quarter of the photos become "close-ups" without pose
+        f["pose"], f["depth"], f["tracking"] = None, None, "none"
+        f["intrinsics"] = [0, 0, f["width"] / 2, f["height"] / 2]
+    (cap / "manifest.json").write_text(_json.dumps(m))
+    b = load_bundle(cap)
+    r = run_sfm(b, tmp_path / "job", QUALITY["draft"], log=lambda *_: None, use_gpu=False)
+    assert r.registered == len(b.frames)
+    assert r.aligned and r.pose_rms_mm < 10

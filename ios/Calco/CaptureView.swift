@@ -9,7 +9,6 @@ struct CaptureView: View {
     @State private var confirmDiscard = false
     @State private var finishing = false
     @State private var flash = false
-    @State private var showDetails = false
     let onFinished: () -> Void
 
     init(mode: ScanMode, onFinished: @escaping () -> Void) {
@@ -19,13 +18,15 @@ struct CaptureView: View {
 
     var body: some View {
         ZStack {
-            if capture.mode == .macro {
-                MacroCaptureScreen(capture: capture, title: "Macro scan") { finish() }
-            } else {
-                ARContainer(capture: capture).ignoresSafeArea()
-                arOverlay
+            ARContainer(capture: capture).ignoresSafeArea()
+            if capture.closeUp {
+                // too close for the main lens: the close-up camera takes over until you move back
+                CloseUpLayer(capture: capture)
+                    .transition(.opacity)
             }
+            arOverlay
         }
+        .animation(.easeInOut(duration: 0.3), value: capture.closeUp)
         .overlay {
             // a quick bright frame around the screen each time a photo is taken
             RoundedRectangle(cornerRadius: 44)
@@ -41,9 +42,6 @@ struct CaptureView: View {
         .statusBarHidden()
         .onAppear { capture.start() }
         .onDisappear { capture.stop() }
-        .fullScreenCover(isPresented: $showDetails, onDismiss: { capture.resumeAfterDetails() }) {
-            MacroCaptureScreen(capture: capture, title: "Detail photos") { showDetails = false }
-        }
         .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard \(capture.frameCount) photos", role: .destructive) {
                 capture.discard()
@@ -73,13 +71,15 @@ struct CaptureView: View {
                         .foregroundStyle(.white)
                 }
                 Spacer()
-                Text(capture.hint)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .animation(.easeInOut(duration: 0.2), value: capture.hint)
-                if capture.mode != .space, !capture.isRecording {
+                if !capture.closeUp {
+                    Text(capture.hint)
+                        .font(.subheadline)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .animation(.easeInOut(duration: 0.2), value: capture.hint)
+                }
+                if capture.mode != .space, !capture.isRecording, !capture.closeUp {
                     sizeControl
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -137,14 +137,19 @@ struct CaptureView: View {
 
     private var bottomBar: some View {
         HStack {
-            Button {
-                capture.pauseForDetails()
-                showDetails = true
-            } label: {
-                Image(systemName: "camera.macro").font(.title3).frame(width: 52, height: 52)
-                    .background(.ultraThinMaterial, in: Circle())
+            if capture.closeUp {
+                Button { capture.requestLeaveCloseUp() } label: {
+                    Text("LiDAR").font(.subheadline.weight(.semibold)).frame(width: 64, height: 52)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+                .accessibilityLabel("Back to LiDAR scanning")
+            } else {
+                Button { capture.shootOnce() } label: {
+                    Image(systemName: "camera").font(.title3).frame(width: 52, height: 52)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .accessibilityLabel("Take one photo")
             }
-            .accessibilityLabel("Close-up detail photos")
             Spacer()
             Button { capture.toggleRecording() } label: {
                 ZStack {

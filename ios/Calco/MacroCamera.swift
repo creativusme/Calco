@@ -2,16 +2,20 @@ import AVFoundation
 import CoreMotion
 import SwiftUI
 
-/// Close-up camera for small parts and details. Uses the phone's virtual multi-lens camera, which
-/// switches by itself to the ultra-wide lens (the one that focuses at 2 cm) when the subject is close.
-/// No ARKit here: these photos have no pose; the engine places them from the photos themselves
-/// and takes the scale from the scan mat or from the LiDAR part of the same capture.
+/// Close-up camera used automatically during a scan when the phone gets too close for the main
+/// lens. It is the phone's virtual multi-lens camera set to "1x", so, exactly like the Camera app,
+/// it switches by itself to the ultra-wide lens (which focuses at 2 cm) when the subject is close.
+/// ARKit cannot run at the same time (it owns the main camera): these photos carry no pose; the
+/// engine places them from the photos themselves.
 final class MacroCamera: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
+    enum Lens: Equatable { case unknown, main, macro, tele }
+
     @Published private(set) var running = false
-    @Published private(set) var lens = ""
-    @Published var auto = true
+    @Published private(set) var lens: Lens = .unknown
     @Published private(set) var steady = true
     @Published private(set) var error: String?
+    /// Automatic shutter on/off (follows the scan's record button).
+    var auto = false
 
     let session = AVCaptureSession()
     var onPhoto: ((Data, Int, Int) -> Void)?
@@ -24,22 +28,33 @@ final class MacroCamera: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var busy = false
     private var lensObservation: NSKeyValueObservation?
 
-    func start() {
+    /// Starts the camera. ARKit releases the camera asynchronously, so retry a few times.
+    func start(attempt: Int = 0) {
         queue.async { [self] in
             if session.inputs.isEmpty { configure() }
-            session.startRunning()
+            if !session.isRunning { session.startRunning() }
             let ok = session.isRunning
             DispatchQueue.main.async {
                 self.running = ok
-                if ok { self.startMotion() }
+                if ok {
+                    self.startMotion()
+                } else if attempt < 8 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.start(attempt: attempt + 1) }
+                } else {
+                    self.error = "Close-up camera not available"
+                }
             }
         }
     }
 
-    func stop() {
+    /// Stops the camera and calls back once it has really let go of it (so ARKit can take it back).
+    func stop(completion: (() -> Void)? = nil) {
         motion.stopDeviceMotionUpdates()
-        queue.async { self.session.stopRunning() }
         running = false
+        queue.async {
+            self.session.stopRunning()
+            DispatchQueue.main.async { completion?() }
+        }
     }
 
     private func configure() {
@@ -64,31 +79,36 @@ final class MacroCamera: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             connection.videoRotationAngle = 0
         }
         if (try? device.lockForConfiguration()) != nil {
+            // A virtual camera starts at its widest lens. Zoom to "1x" (the main lens): from there it
+            // drops to the ultra-wide only when the subject is too close to focus, i.e. automatic macro.
+            if let oneX = device.virtualDeviceSwitchOverVideoZoomFactors.first {
+                device.videoZoomFactor = CGFloat(truncating: oneX)
+            }
             if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
-            if device.isSmoothAutoFocusSupported { device.isSmoothAutoFocusEnabled = false }
             device.unlockForConfiguration()
         }
         lensObservation = device.observe(\.activePrimaryConstituent, options: [.initial, .new]) { [weak self] d, _ in
-            let name: String
+            let lens: Lens
             switch d.activePrimaryConstituent?.deviceType {
-            case .some(.builtInUltraWideCamera): name = "Macro lens"
-            case .some(.builtInTelephotoCamera): name = "Tele lens"
-            default: name = "Main lens"
+            case .some(.builtInUltraWideCamera): lens = .macro
+            case .some(.builtInTelephotoCamera): lens = .tele
+            case .some(.builtInWideAngleCamera): lens = .main
+            default: lens = d.isVirtualDevice ? .unknown : .main
             }
-            DispatchQueue.main.async { self?.lens = name }
+            DispatchQueue.main.async { self?.lens = lens }
         }
     }
 
     /// Automatic shutter: a photo each time the phone has turned about 6 degrees and is held still
     /// (rotation below 0.35 rad/s), so close-ups are not blurred.
     private func startMotion() {
-        guard motion.isDeviceMotionAvailable else { return }
+        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
         motion.deviceMotionUpdateInterval = 1.0 / 30
         motion.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data else { return }
             let r = data.rotationRate
             let spin = sqrt(r.x * r.x + r.y * r.y + r.z * r.z)
-            self.steady = spin < 0.35
+            if (spin < 0.35) != self.steady { self.steady = spin < 0.35 }
             guard self.auto, self.running, self.steady, Date().timeIntervalSince(self.lastShot) > 0.6 else { return }
             if let last = self.lastAttitude, let now = data.attitude.copy() as? CMAttitude {
                 now.multiply(byInverseOf: last)
@@ -143,72 +163,72 @@ struct CameraPreview: UIViewRepresentable {
     }
 }
 
-/// Full-screen close-up camera. Used for the Macro scan mode and for "Details" inside a LiDAR scan.
-struct MacroCaptureScreen: View {
+/// Shown over the scan while the phone is too close for LiDAR tracking. Takes close-up photos into
+/// the same capture and hands back to LiDAR by itself when the phone moves away again.
+struct CloseUpLayer: View {
     @ObservedObject var capture: CaptureSession
-    let title: String
-    let onDone: () -> Void
     @StateObject private var camera = MacroCamera()
-    @State private var added = 0
+    @State private var mainSince: Date?
+    @State private var leaving = false
+    private let tick = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
+            Color.black.ignoresSafeArea()
             CameraPreview(session: camera.session).ignoresSafeArea()
-            VStack(spacing: 12) {
-                HStack {
-                    Text(title).font(.headline)
-                    Spacer()
-                    if !camera.lens.isEmpty {
-                        Text(camera.lens).font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .transition(.opacity)
-                    }
-                    Label("\(added)", systemImage: "camera.macro").monospacedDigit()
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 12).frame(height: 34)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .contentTransition(.numericText())
+                .opacity(camera.running ? 1 : 0)
+                .animation(.easeOut(duration: 0.25), value: camera.running)
+            VStack {
+                Spacer().frame(height: 64)
+                HStack(spacing: 8) {
+                    Image(systemName: "camera.macro")
+                    Text(camera.lens == .macro ? "Close-up lens" : "Close-up")
+                    Text("· LiDAR paused").foregroundStyle(.white.opacity(0.7))
                 }
-                .foregroundStyle(.white)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Color.calcoAccent.opacity(0.9), in: Capsule())
+                .foregroundStyle(.black)
                 if let error = camera.error {
                     Text(error).padding(8).background(.red.opacity(0.85), in: Capsule()).foregroundStyle(.white)
                 }
                 Spacer()
-                Text(camera.steady ? "Hold 3–15 cm from the part and turn around it slowly" : "Hold still")
+                Text(camera.steady ? "Turn slowly around the detail. Move back to return to LiDAR." : "Hold still")
                     .font(.subheadline)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(.ultraThinMaterial, in: Capsule())
                     .foregroundStyle(.white)
                     .animation(.easeInOut(duration: 0.2), value: camera.steady)
-                HStack {
-                    Toggle(isOn: $camera.auto) { Text("Auto").font(.subheadline.weight(.semibold)) }
-                        .toggleStyle(.button).tint(.calcoAccent)
-                    Spacer()
-                    Button { camera.shoot() } label: {
-                        ZStack {
-                            Circle().strokeBorder(.white, lineWidth: 4).frame(width: 78, height: 78)
-                            Circle().fill(.white).frame(width: 64, height: 64)
-                        }
-                    }
-                    .accessibilityLabel("Take photo")
-                    Spacer()
-                    Button(action: onDone) {
-                        Text("Done").font(.headline).frame(width: 74, height: 52)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                    .foregroundStyle(.white)
-                }
+                Spacer().frame(height: 120)
             }
             .padding()
         }
         .onAppear {
+            camera.auto = capture.isRecording
             camera.onPhoto = { data, w, h in
-                capture.appendPhoto(jpeg: data, width: w, height: h)
-                withAnimation(.snappy) { added += 1 }
+                if capture.isRecording || !camera.auto { capture.appendPhoto(jpeg: data, width: w, height: h) }
             }
             camera.start()
         }
         .onDisappear { camera.stop() }
+        .onChange(of: capture.isRecording) { _, recording in camera.auto = recording }
+        .onChange(of: capture.manualShot) { _, _ in camera.shoot() }
+        .onReceive(tick) { now in
+            // back to LiDAR once the phone has been far enough for the main lens for a moment
+            guard !leaving, camera.running, now.timeIntervalSince(capture.closeUpSince) > 1.5 else { return }
+            if camera.lens == .main {
+                if mainSince == nil { mainSince = now }
+                if let since = mainSince, now.timeIntervalSince(since) > 1.2 { leave() }
+            } else {
+                mainSince = nil
+            }
+        }
+        .onChange(of: capture.leaveCloseUpRequest) { _, _ in leave() }
+    }
+
+    private func leave() {
+        guard !leaving else { return }
+        leaving = true
+        camera.stop { capture.leaveCloseUp() }
     }
 }

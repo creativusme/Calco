@@ -47,7 +47,7 @@ struct LibraryView: View {
                 Button(mode.title) { scanning = mode }
             }
         } message: {
-            Text("Object, Person and Space use LiDAR. Macro uses the close-focus lens for parts of a few centimetres.")
+            Text("Get as close as you like: when the main lens can no longer focus, the close-up lens takes over by itself.")
         }
         .fullScreenCover(item: $scanning) { mode in
             CaptureView(mode: mode) {
