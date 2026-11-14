@@ -14,30 +14,30 @@ struct LibraryView: View {
     @State private var selecting = false
     @State private var selection = Set<String>()
     @State private var confirmDelete: Set<String>?
-    @State private var now = Date()
-    private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                ConnectionBar(uploader: uploader, server: server, now: now) { showSettings = true }
+                ConnectionBar(uploader: uploader, server: server) { showSettings = true }
                 content
             }
             .navigationTitle("Calco")
             .toolbar { toolbar }
             .safeAreaInset(edge: .bottom) { bottomBar }
+            .animation(.snappy(duration: 0.25), value: selecting)
+            .animation(.easeInOut(duration: 0.2), value: store.captures)
         }
         .tint(.calcoAccent)
         .onAppear {
             store.reload()
             uploader.start()
             server.start()
+            if !Pairing.isPaired { showSettings = true }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { server.start(); uploader.start(); store.reload() }
             if phase == .background { uploader.stop() }
         }
-        .onReceive(tick) { now = $0 }
         .onReceive(NotificationCenter.default.publisher(for: .calcoCapturesChanged)) { _ in store.reload() }
         .onReceive(NotificationCenter.default.publisher(for: .calcoComputerFound)) { _ in
             Task { await uploader.sendPending(store: store) }
@@ -46,6 +46,8 @@ struct LibraryView: View {
             ForEach(ScanMode.allCases) { mode in
                 Button(mode.title) { scanning = mode }
             }
+        } message: {
+            Text("Object, Person and Space use LiDAR. Macro uses the close-focus lens for parts of a few centimetres.")
         }
         .fullScreenCover(item: $scanning) { mode in
             CaptureView(mode: mode) {
@@ -113,15 +115,8 @@ struct LibraryView: View {
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                let sent = Set(store.captures.filter(\.uploaded).map(\.id))
-                Button("Delete sent scans (\(sent.count))", systemImage: "trash", role: .destructive) { confirmDelete = sent }
-                    .disabled(sent.isEmpty)
-                Button("Settings", systemImage: "gearshape") { showSettings = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel("More")
+            Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                .accessibilityLabel("Settings")
         }
     }
 
@@ -138,6 +133,7 @@ struct LibraryView: View {
             }
             .padding()
             .background(.bar)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         } else {
             Button { pickingMode = true } label: {
                 Label("New scan", systemImage: "plus").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
@@ -145,6 +141,7 @@ struct LibraryView: View {
             .buttonStyle(.borderedProminent)
             .foregroundStyle(.black)
             .padding()
+            .transition(.opacity)
         }
     }
 
@@ -163,64 +160,76 @@ struct LibraryView: View {
 }
 
 /// One line that always says whether the computer is reachable, and how.
+/// It re-reads the clock every 2 s on its own, so the rest of the screen never redraws for it.
 private struct ConnectionBar: View {
     @ObservedObject var uploader: Uploader
     @ObservedObject var server: PhoneServer
-    let now: Date
     let openSettings: () -> Void
 
     var body: some View {
-        Button(action: openSettings) {
-            HStack(spacing: 10) {
-                Circle().fill(color).frame(width: 9, height: 9)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        TimelineView(.periodic(from: .now, by: 2)) { context in
+            let state = BarState(uploader: uploader, server: server, now: context.date)
+            Button(action: openSettings) {
+                HStack(spacing: 10) {
+                    Circle().fill(state.color).frame(width: 9, height: 9)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(state.title).font(.subheadline.weight(.semibold))
+                        Text(state.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Spacer()
+                    Image(systemName: state.icon).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Image(systemName: icon).foregroundStyle(.secondary)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(state.color.opacity(0.12))
+                .animation(.easeInOut(duration: 0.3), value: state.title)
             }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            .background(color.opacity(0.12))
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens connection settings")
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("Opens connection settings")
     }
 
-    private var cable: Bool {
-        guard let t = server.lastContact else { return false }
-        return now.timeIntervalSince(t) < 8
-    }
+    struct BarState {
+        let color: Color, icon: String, title: String, detail: String
 
-    private var color: Color {
-        if cable || uploader.isConnected { return .green }
-        if case .unreachable = uploader.wifi { return .orange }
-        return .gray
-    }
-
-    private var icon: String {
-        if cable { return server.link == "cable" ? "cable.connector" : "wifi" }
-        return uploader.isConnected ? "wifi" : "wifi.slash"
-    }
-
-    private var title: String {
-        if cable {
-            if let s = server.sending { return "Sending \(s)…" }
-            return server.link == "cable" ? "Connected by cable" : "Connected (Wi-Fi sync)"
-        }
-        if case let .connected(host) = uploader.wifi { return "Connected by Wi-Fi · \(host)" }
-        return "Not connected to the computer"
-    }
-
-    private var detail: String {
-        if cable { return "New scans go to the computer by themselves." }
-        switch uploader.wifi {
-        case .connected:
-            return uploader.autoSend ? "New scans are sent automatically." : "Tap Send on a scan to transfer it."
-        case .unreachable(let why):
-            return why
-        case .searching:
-            return "Open Calco on the computer. Then plug in the cable, or use the same Wi-Fi."
+        init(uploader: Uploader, server: PhoneServer, now: Date) {
+            let cable = server.lastContact.map { now.timeIntervalSince($0) < 8 } ?? false
+            let refused = server.refused.map { now.timeIntervalSince($0) < 8 } ?? false
+            if cable {
+                color = .green
+                icon = server.link == "cable" ? "cable.connector" : "wifi"
+                title = server.sending.map { "Sending \($0)…" } ?? (server.link == "cable" ? "Connected by cable" : "Connected (Wi-Fi sync)")
+                detail = "New scans go to the computer by themselves."
+                return
+            }
+            if refused {
+                color = .orange
+                icon = "lock"
+                title = "A computer is asking for your scans"
+                detail = "Pair first: tap here and type the code and password shown on the computer."
+                return
+            }
+            switch uploader.wifi {
+            case .connected(let host):
+                color = .green
+                icon = "wifi"
+                title = "Connected by Wi-Fi · \(host)"
+                detail = uploader.autoSend ? "New scans are sent automatically." : "Tap Send on a scan to transfer it."
+            case .unreachable(let why):
+                color = .orange
+                icon = "wifi.exclamationmark"
+                title = "Paired computer not reachable"
+                detail = why
+            case .searching:
+                color = .gray
+                icon = "wifi"
+                title = "Connecting…"
+                detail = "Checking the paired computer."
+            case .notPaired:
+                color = .gray
+                icon = "link"
+                title = "Not paired with a computer"
+                detail = "Tap here and type the network code and password shown in Calco on the computer."
+            }
         }
     }
 }
@@ -233,12 +242,8 @@ private struct CaptureRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: capture.previewURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Color.secondary.opacity(0.2)
-            }
-            .frame(width: 64, height: 48).clipShape(RoundedRectangle(cornerRadius: 6))
+            Thumbnail(url: capture.previewURL)
+                .frame(width: 64, height: 48).clipShape(RoundedRectangle(cornerRadius: 6))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(capture.name).font(.body.weight(.medium)).lineLimit(1)
@@ -249,19 +254,50 @@ private struct CaptureRow: View {
                 }
             }
             Spacer()
-            if let p = uploader.progress[capture.id] {
-                ProgressView(value: p).progressViewStyle(.circular)
-                Text("\(Int(p * 100))%").font(.caption).monospacedDigit().frame(width: 38, alignment: .trailing)
-            } else if server.sending == capture.name {
-                ProgressView().progressViewStyle(.circular)
-            } else if capture.uploaded {
-                Label("On computer", systemImage: "checkmark.circle.fill").labelStyle(.iconOnly)
-                    .foregroundStyle(.green).accessibilityLabel("On the computer")
-            } else {
-                Button("Send", action: send).buttonStyle(.bordered)
+            Group {
+                if let p = uploader.progress[capture.id] {
+                    ProgressView(value: p).progressViewStyle(.circular)
+                    Text("\(Int(p * 100))%").font(.caption).monospacedDigit().frame(width: 38, alignment: .trailing)
+                        .contentTransition(.numericText())
+                } else if server.sending == capture.name {
+                    ProgressView().progressViewStyle(.circular)
+                } else if capture.uploaded {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("On the computer")
+                } else {
+                    Button("Send", action: send).buttonStyle(.bordered)
+                }
             }
+            .transition(.opacity)
         }
         .padding(.vertical, 2)
+        .animation(.easeInOut(duration: 0.2), value: capture.uploaded)
+    }
+}
+
+/// Preview image loaded once and cached, so list refreshes never make it flicker.
+private struct Thumbnail: View {
+    let url: URL
+    @State private var image: UIImage?
+    private static let cache = NSCache<NSURL, UIImage>()
+
+    var body: some View {
+        ZStack {
+            Color.secondary.opacity(0.15)
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+            }
+        }
+        .task(id: url) {
+            if let cached = Self.cache.object(forKey: url as NSURL) {
+                image = cached
+                return
+            }
+            let loaded = await Task.detached(priority: .utility) { UIImage(contentsOfFile: url.path) }.value
+            if let loaded {
+                Self.cache.setObject(loaded, forKey: url as NSURL)
+                withAnimation(.easeOut(duration: 0.2)) { image = loaded }
+            }
+        }
     }
 }
 
@@ -270,36 +306,58 @@ private struct SettingsView: View {
     @ObservedObject var server: PhoneServer
     @ObservedObject var store: CaptureStore
     @Environment(\.dismiss) private var dismiss
+    @State private var code = Pairing.code
+    @State private var password = Pairing.password
+    @State private var checking = false
+    @State private var result: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Cable", value: server.isConnected ? "Connected" : (server.listening ? "Waiting for the computer" : "Starting…"))
+                    TextField("Network code, e.g. 30AG-0EK", text: $code)
+                        .font(.body.monospaced())
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                    SecureField("Password (6 digits)", text: $password)
+                        .keyboardType(.numberPad)
+                        .font(.body.monospaced())
+                    Button {
+                        checking = true
+                        result = nil
+                        Task {
+                            let ok = await uploader.pair(code: code, password: password)
+                            checking = false
+                            result = ok ? "Connected." : nil
+                        }
+                    } label: {
+                        HStack {
+                            Text(Pairing.isPaired ? "Save and test" : "Connect")
+                            if checking { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(Pairing.address(fromCode: code) == nil || password.filter(\.isNumber).count != 6 || checking)
+                    statusLine
+                    if Pairing.isPaired {
+                        Button("Forget this computer", role: .destructive) {
+                            uploader.unpair()
+                            code = ""
+                            password = ""
+                            result = nil
+                        }
+                    }
                 } header: {
-                    Text("USB cable")
+                    Text("Connect")
                 } footer: {
-                    Text("Plug the iPhone into the computer with Calco open on both. Missing scans move by themselves, no setup needed. The computer needs Apple Devices or iTunes installed (Sideloadly already requires it).")
+                    Text("Both are shown at the bottom left of Calco on the computer. They are needed for Wi-Fi and for the cable: only the paired computer can receive your scans.")
                 }
                 Section {
-                    switch uploader.wifi {
-                    case .connected(let host): LabeledContent("Status", value: "Connected to \(host)")
-                    case .unreachable(let why): Text(why).foregroundStyle(.orange)
-                    case .searching: Text("Searching the Wi-Fi network…").foregroundStyle(.secondary)
-                    }
-                    ForEach(uploader.discovered, id: \.self) { address in
-                        Label(address, systemImage: "desktopcomputer")
-                    }
-                    TextField("Address, e.g. 192.168.1.20:7878", text: $uploader.manualAddress)
-                        .keyboardType(.numbersAndPunctuation)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                    LabeledContent("Cable", value: server.isConnected ? "Connected" : (server.listening ? "Waiting for the computer" : "Starting…"))
                     Toggle("Send new scans automatically", isOn: $uploader.autoSend)
-                    Button("Test connection") { Task { await uploader.ping() } }
                 } header: {
-                    Text("Wi-Fi")
+                    Text("Transfer")
                 } footer: {
-                    Text("Phone and computer on the same Wi-Fi. The address is only needed when the computer is not found by itself; it is shown at the bottom left of Calco on the computer. If it does not answer, Windows Firewall is usually the reason: Calco on the computer shows how to fix it.")
+                    Text("By cable, the computer collects missing scans by itself while Calco is open on both. Over Wi-Fi, new scans are sent when the paired computer answers.")
                 }
                 Section {
                     LabeledContent("Scans", value: "\(store.captures.count)")
@@ -317,6 +375,16 @@ private struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
+            .animation(.easeInOut(duration: 0.2), value: uploader.wifi)
+        }
+    }
+
+    @ViewBuilder private var statusLine: some View {
+        switch uploader.wifi {
+        case .connected(let host): Label("Connected to \(host)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+        case .unreachable(let why): Text(why).foregroundStyle(.orange).font(.callout)
+        case .searching: Text("Checking…").foregroundStyle(.secondary)
+        case .notPaired: EmptyView()
         }
     }
 }

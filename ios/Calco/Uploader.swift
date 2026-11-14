@@ -1,29 +1,25 @@
 import Foundation
-import Network
 import UIKit
 
-/// Wi-Fi link to the Calco engine on the computer: finds it (Bonjour `_calco._tcp` or a typed
-/// address), checks every few seconds that it answers, and uploads captures to it.
+/// Wi-Fi link to the Calco engine on the computer: connects only to the computer paired with a
+/// network code and password (no automatic discovery), checks every few seconds that it answers,
+/// and uploads captures to it.
 /// Uploads are per file and resumable: files the computer already has are skipped.
 final class Uploader: ObservableObject {
     enum WifiState: Equatable {
-        case searching            // nothing found yet
+        case notPaired            // no code / password typed yet
+        case searching            // paired, first check not answered yet
         case connected(String)    // computer name
         case unreachable(String)  // found or typed, but it does not answer: why
     }
 
-    @Published var discovered: [String] = []          // "192.168.1.20:7878"
-    @Published private(set) var wifi: WifiState = .searching
+    @Published private(set) var wifi: WifiState = Pairing.isPaired ? .searching : .notPaired
     @Published var progress: [String: Double] = [:]   // capture id -> 0...1 while uploading
     @Published var errors: [String: String] = [:]     // capture id -> last error
-    @Published var manualAddress: String {
-        didSet { UserDefaults.standard.set(manualAddress, forKey: "serverAddress"); wifi = .searching }
-    }
     @Published var autoSend: Bool {
         didSet { UserDefaults.standard.set(autoSend, forKey: "autoSend") }
     }
 
-    private var browser: NWBrowser?
     private var timer: Timer?
     private let deviceName = UIDevice.current.name
     private lazy var session: URLSession = {
@@ -34,15 +30,35 @@ final class Uploader: ObservableObject {
     }()
 
     init() {
-        manualAddress = UserDefaults.standard.string(forKey: "serverAddress") ?? ""
         autoSend = UserDefaults.standard.object(forKey: "autoSend") as? Bool ?? true
     }
 
-    /// The address uploads go to: the one typed in Settings, else the first computer found.
+    /// The paired computer's address, from its network code.
     var server: String? {
-        let typed = manualAddress.trimmingCharacters(in: .whitespaces)
-        if !typed.isEmpty { return typed.contains(":") ? typed : "\(typed):7878" }
-        return discovered.first
+        guard Pairing.isPaired, let ip = Pairing.address(fromCode: Pairing.code) else { return nil }
+        return "\(ip):7878"
+    }
+
+    /// Save a new code + password and check them right away. Returns true when the computer accepts them.
+    @MainActor
+    func pair(code: String, password: String) async -> Bool {
+        Pairing.code = Pairing.format(code)
+        Pairing.password = password.filter(\.isNumber)
+        wifi = Pairing.isPaired ? .searching : .notPaired
+        await ping()
+        return isConnected
+    }
+
+    @MainActor
+    func unpair() {
+        Pairing.password = ""
+        Pairing.code = ""
+        wifi = .notPaired
+    }
+
+    private func authorize(_ request: inout URLRequest) {
+        request.setValue(deviceName, forHTTPHeaderField: "X-Calco-Device")
+        request.setValue(Pairing.password, forHTTPHeaderField: "X-Calco-Pin")
     }
 
     var isConnected: Bool {
@@ -50,10 +66,9 @@ final class Uploader: ObservableObject {
         return false
     }
 
-    // MARK: Discovery and heartbeat
+    // MARK: Heartbeat
 
     func start() {
-        startBrowsing()
         guard timer == nil else { return }
         let t = Timer(timeInterval: 3, repeats: true) { [weak self] _ in Task { await self?.ping() } }
         RunLoop.main.add(t, forMode: .common)
@@ -66,57 +81,26 @@ final class Uploader: ObservableObject {
         timer = nil
     }
 
-    private func startBrowsing() {
-        guard browser == nil else { return }
-        let b = NWBrowser(for: .bonjour(type: "_calco._tcp", domain: nil), using: .tcp)
-        b.browseResultsChangedHandler = { [weak self] results, _ in
-            for result in results { self?.resolve(result.endpoint) }
-        }
-        b.start(queue: .main)
-        browser = b
-    }
-
-    /// Bonjour gives a service name; connect once to learn its IPv4 address and port.
-    private func resolve(_ endpoint: NWEndpoint) {
-        let params = NWParameters.tcp
-        if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
-            ip.version = .v4
-        }
-        let connection = NWConnection(to: endpoint, using: params)
-        connection.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                if case let .hostPort(host, port)? = connection.currentPath?.remoteEndpoint {
-                    var name = "\(host)"
-                    if let scope = name.firstIndex(of: "%") { name = String(name[..<scope]) }
-                    let address = "\(name):\(port.rawValue)"
-                    if let self, !self.discovered.contains(address) { self.discovered.append(address) }
-                }
-                connection.cancel()
-            case .failed:
-                connection.cancel()
-            default:
-                break
-            }
-        }
-        connection.start(queue: .main)
-    }
-
     private struct Hello: Decodable { var hostname: String }
 
     @MainActor
     func ping() async {
         guard let server, let url = URL(string: "http://\(server)/api/hello") else {
-            wifi = .searching
+            wifi = .notPaired
             return
         }
         var request = URLRequest(url: url)
-        request.setValue(deviceName, forHTTPHeaderField: "X-Calco-Device")
+        authorize(&request)
         request.timeoutInterval = 3
         do {
             let (data, response) = try await session.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                wifi = .unreachable("\(server) is not Calco: check the address.")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 {
+                wifi = .unreachable("Wrong password: type the 6 digits shown in Calco on the computer.")
+                return
+            }
+            guard status == 200 else {
+                wifi = .unreachable("That network code is not a Calco computer.")
                 return
             }
             let host = (try? JSONDecoder().decode(Hello.self, from: data))?.hostname ?? server
@@ -132,7 +116,7 @@ final class Uploader: ObservableObject {
         let code = (error as? URLError)?.code
         switch code {
         case .timedOut, .cannotConnectToHost, .networkConnectionLost:
-            return "\(server) does not answer. On the computer: is Calco running? Windows Firewall may block it (see Calco on the computer). The USB cable always works."
+            return "The computer does not answer. Is Calco running on it, on the same Wi-Fi? Windows Firewall may block it (Calco on the computer shows how to fix it). The cable always works."
         case .notConnectedToInternet:
             return "This phone is not on a Wi-Fi network."
         case .appTransportSecurityRequiresSecureConnection:
@@ -154,7 +138,7 @@ final class Uploader: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noServer: return "No computer connected. Plug in the cable, or open Calco on the computer on the same Wi-Fi."
+            case .noServer: return "Not paired with a computer: Settings → Connect, then type the code and password shown on the computer."
             case .rejected(let why): return why
             }
         }
@@ -189,7 +173,7 @@ final class Uploader: ObservableObject {
         let api = base.appendingPathComponent("api/captures/\(capture.id)")
 
         var haveRequest = URLRequest(url: api.appendingPathComponent("have"))
-        haveRequest.setValue(deviceName, forHTTPHeaderField: "X-Calco-Device")
+        authorize(&haveRequest)
         let (haveData, _) = try await session.data(for: haveRequest)
         let have = (try? JSONDecoder().decode(Have.self, from: haveData))?.files ?? [:]
 
@@ -216,7 +200,7 @@ final class Uploader: ObservableObject {
                 var request = URLRequest(url: api.appendingPathComponent("files/\(file.path)"))
                 request.httpMethod = "PUT"
                 request.timeoutInterval = 120
-                request.setValue(deviceName, forHTTPHeaderField: "X-Calco-Device")
+                authorize(&request)
                 let (_, response) = try await session.upload(for: request, fromFile: file.url)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                     throw UploadError.rejected("The computer refused \(file.path)")
@@ -228,7 +212,7 @@ final class Uploader: ObservableObject {
 
         var done = URLRequest(url: api.appendingPathComponent("complete"))
         done.httpMethod = "POST"
-        done.setValue(deviceName, forHTTPHeaderField: "X-Calco-Device")
+        authorize(&done)
         let (body, response) = try await session.data(for: done)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw UploadError.rejected(String(data: body, encoding: .utf8) ?? "The computer rejected the capture")

@@ -34,6 +34,8 @@ class Options:
     method: str = "auto"  # auto | lidar | photo
     isolate: bool = True  # crop to the object, remove the support plane and loose pieces
     close_bottom: bool = True  # flat, closed base where the object touched the support
+    texture: bool = True  # colour texture; off for 3D printing: faster, smaller photos
+    drop_blurry: bool = True  # leave out blurred / out-of-focus photos
     print_scale: float = 1.0  # measured length of the mat's 100 mm bar / 100
     texture_size: int | None = None
     gpu: bool = True  # use the graphics card when the CUDA engine is installed
@@ -46,6 +48,7 @@ class Options:
 
 STAGES = [
     ("ingest", "Read capture"),
+    ("select", "Pick sharp photos"),
     ("align", "Align photos"),
     ("scale", "Scale & orientation"),
     ("geometry", "Build geometry"),
@@ -208,6 +211,8 @@ def _isolate(mesh: Mesh, frame: ModelFrame, crop_box, views: list[View], cut: fl
         mesh = mesh.select_vertices(z > cut)
         if len(mesh.f) == 0:
             raise RuntimeError("The whole mesh lies on the support plane.")
+    if frame.has_plane:
+        mesh = meshops.drop_flat_pieces(mesh, transform_points(frame.M, mesh.v)[:, 2], min_height=4 * cut)
     mesh = meshops.keep_largest(mesh, min_ratio=0.05)
 
     # 3. flat closed base: snap the open rim down to the plane, then cap it
@@ -237,7 +242,16 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
     p = plan(bundle, options)
     quality: Quality = QUALITY[p["quality"]]
     photo = p["method"] == "photo"
-    names = [n for n, _ in STAGES if (n != "align" or photo) and (n != "cleanup" or p["isolate"])]
+    skip = set()
+    if not photo:
+        skip |= {"align", "select"}
+    if not options.drop_blurry:
+        skip.add("select")
+    if not p["isolate"]:
+        skip.add("cleanup")
+    if not options.texture:
+        skip.add("texture")
+    names = [n for n, _ in STAGES if n not in skip]
     job = Job(Path(job_dir), names)
     work = job.dir / "work"
     work.mkdir(exist_ok=True)
@@ -250,13 +264,24 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         job.log(f"Capture {bundle.name}: {len(bundle.frames)} frames, mode {bundle.mode}, plan {p}")
         job.done()
 
+        # ---- photos worth using
+        scores = None
+        if "select" in names:
+            from .select import drop_blurry
+
+            job.start("select")
+            bundle, dropped, scores = drop_blurry(bundle, job.log, job.progress)
+            report["photos"] = {"dropped_blurry": dropped, "used": len(bundle.frames)}
+            job.done()
+
         # ---- cameras
         sfm = None
         if photo:
             from .sfm import run_sfm
 
             job.start("align")
-            sfm = run_sfm(bundle, work, quality, job.log, job.progress, options.gpu)
+            sfm = run_sfm(bundle, work, quality, job.log, job.progress, options.gpu,
+                          photo_size=None if options.texture else quality.dense_size)
             report["compute"] = {"features": sfm.computed_on, "dense": "cpu"}
             views = sfm.views
             report["warnings"] += sfm.warnings
@@ -280,7 +305,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         if photo:
             from .mvs import dense_mesh
 
-            mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu)
+            mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu, scores)
             report["compute"]["dense"] = dense_on
             mesh = Mesh.read(mesh_path)
         else:
@@ -323,9 +348,11 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             mesh = meshops.decimate(meshops.tidy(mesh), quality.target_faces)
 
         # ---- texture
-        job.start("texture")
         tex_size = options.texture_size or quality.texture_size
-        if photo:
+        if not options.texture:
+            tm = trimesh.Trimesh(mesh.v, mesh.f, process=False)  # geometry only, e.g. for 3D printing
+        elif photo:
+            job.start("texture")
             from .mvs import texture_mesh
 
             cleaned = work / "mvs" / "cleaned.ply"
@@ -336,11 +363,13 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             image = getattr(tm.visual.material, "image", None) or getattr(tm.visual.material, "baseColorTexture", None)
             tm.visual.material = trimesh.visual.material.PBRMaterial(
                 baseColorTexture=image, metallicFactor=0.0, roughnessFactor=1.0)
+            job.done()
         else:
+            job.start("texture")
             from .texture import bake_texture
 
             tm = bake_texture(mesh, views, min(tex_size, 4096), job.progress)
-        job.done()
+            job.done()
 
         # ---- finalize: move into the model frame, centred on the object
         job.start("finalize")
@@ -365,7 +394,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             "vertices": int(len(vm)), "faces": int(len(tm.faces)),
             "dimensions_mm": [round(float(d), 2) for d in dims],
             "watertight": meshops.is_watertight(meshops.tidy(geo)),
-            "textured": True,
+            "textured": options.texture,
         }
         report["scale"] = _scale_report(frame, dims, views, photo, quality)
         report["seconds"] = round(time.time() - job.status["started"], 1)

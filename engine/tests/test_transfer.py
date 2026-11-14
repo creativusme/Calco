@@ -125,3 +125,25 @@ def test_no_phone_app_means_not_connected(tmp_path):
     bridge = usb.UsbBridge(lib, devices=lambda: [{"id": 1, "link": "usb", "serial": "x"}], connector=refuse)
     bridge.poll_once()
     assert bridge.status()["phone"] is None and bridge.available is True
+
+
+def test_pairing_password_is_required_for_the_phone(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from calco.pairing import decode_code, encode_ip
+    from calco.server import create_app
+
+    app = create_app(Library(tmp_path / "lib"))
+    client = TestClient(app)
+    info = client.get("/api/pairing").json()  # the computer itself sees the code and password
+    pin = info["pin"]
+    assert len(pin) == 6 and pin.isdigit()
+    phone = {"X-Calco-Device": "Test iPhone"}
+    assert client.get("/api/hello", headers=phone).status_code == 401
+    assert client.get("/api/hello", headers={**phone, "X-Calco-Pin": "000000" if pin != "000000" else "111111"}).status_code == 401
+    assert client.get("/api/hello", headers={**phone, "X-Calco-Pin": pin}).status_code == 200
+    assert client.put("/api/captures/x/files/manifest.json", content=b"{}", headers=phone).status_code == 401
+    new = client.post("/api/pairing/new").json()["pin"]
+    assert client.get("/api/hello", headers={**phone, "X-Calco-Pin": pin}).status_code in (200, 401)
+    assert client.get("/api/hello", headers={**phone, "X-Calco-Pin": new}).status_code == 200
+    assert decode_code(encode_ip("192.168.1.211")) == "192.168.1.211"

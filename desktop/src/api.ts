@@ -117,5 +117,7 @@ export const api = {
   mat3dUrl: (size: string) => `${BASE}/api/mat.zip?size=${size}`,
   demo: () => post<{ started: boolean }>("/api/demo"),
   recheckNetwork: () => post("/api/network/recheck"),
+  pairing: () => call<{ codes: { address: string; code: string }[]; pin: string; port: number }>("/api/pairing"),
+  newPin: () => post<{ pin: string }>("/api/pairing/new"),
   installTools: (what: "openmvs" | "colmap") => post<{ started: boolean }>(`/api/tools/install?what=${what}`),
 };

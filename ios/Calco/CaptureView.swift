@@ -9,6 +9,7 @@ struct CaptureView: View {
     @State private var confirmDiscard = false
     @State private var finishing = false
     @State private var flash = false
+    @State private var showDetails = false
     let onFinished: () -> Void
 
     init(mode: ScanMode, onFinished: @escaping () -> Void) {
@@ -18,28 +19,12 @@ struct CaptureView: View {
 
     var body: some View {
         ZStack {
-            ARContainer(capture: capture).ignoresSafeArea()
-            VStack(spacing: 12) {
-                topBar
-                if let warning = capture.warning {
-                    Text(warning)
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(.red.opacity(0.85), in: Capsule())
-                        .foregroundStyle(.white)
-                }
-                Spacer()
-                Text(capture.hint)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                if capture.mode != .space, !capture.isRecording {
-                    sizeControl
-                }
-                bottomBar
+            if capture.mode == .macro {
+                MacroCaptureScreen(capture: capture, title: "Macro scan") { finish() }
+            } else {
+                ARContainer(capture: capture).ignoresSafeArea()
+                arOverlay
             }
-            .padding()
         }
         .overlay {
             // a quick bright frame around the screen each time a photo is taken
@@ -56,6 +41,9 @@ struct CaptureView: View {
         .statusBarHidden()
         .onAppear { capture.start() }
         .onDisappear { capture.stop() }
+        .fullScreenCover(isPresented: $showDetails, onDismiss: { capture.resumeAfterDetails() }) {
+            MacroCaptureScreen(capture: capture, title: "Detail photos") { showDetails = false }
+        }
         .confirmationDialog("Discard this scan?", isPresented: $confirmDiscard, titleVisibility: .visible) {
             Button("Discard \(capture.frameCount) photos", role: .destructive) {
                 capture.discard()
@@ -63,6 +51,43 @@ struct CaptureView: View {
             }
             Button("Keep scanning", role: .cancel) {}
         }
+    }
+
+    private func finish() {
+        finishing = true
+        capture.finish { saved in
+            finishing = false
+            if saved { onFinished() }
+            dismiss()
+        }
+    }
+
+    private var arOverlay: some View {
+            VStack(spacing: 12) {
+                topBar
+                if let warning = capture.warning {
+                    Text(warning)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.red.opacity(0.85), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                Spacer()
+                Text(capture.hint)
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .animation(.easeInOut(duration: 0.2), value: capture.hint)
+                if capture.mode != .space, !capture.isRecording {
+                    sizeControl
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                bottomBar
+            }
+            .padding()
+            .animation(.snappy(duration: 0.25), value: capture.isRecording)
+            .animation(.easeInOut(duration: 0.2), value: capture.warning)
     }
 
     private var topBar: some View {
@@ -112,11 +137,14 @@ struct CaptureView: View {
 
     private var bottomBar: some View {
         HStack {
-            Button { capture.takeManualPhoto() } label: {
-                Image(systemName: "camera").font(.title3).frame(width: 52, height: 52)
+            Button {
+                capture.pauseForDetails()
+                showDetails = true
+            } label: {
+                Image(systemName: "camera.macro").font(.title3).frame(width: 52, height: 52)
                     .background(.ultraThinMaterial, in: Circle())
             }
-            .accessibilityLabel("Take one photo")
+            .accessibilityLabel("Close-up detail photos")
             Spacer()
             Button { capture.toggleRecording() } label: {
                 ZStack {
@@ -129,14 +157,7 @@ struct CaptureView: View {
             }
             .accessibilityLabel(capture.isRecording ? "Pause" : "Start")
             Spacer()
-            Button {
-                finishing = true
-                capture.finish { saved in
-                    finishing = false
-                    if saved { onFinished() }
-                    dismiss()
-                }
-            } label: {
+            Button(action: finish) {
                 Text("Done").font(.headline).frame(width: 64, height: 52)
                     .background(.ultraThinMaterial, in: Capsule())
             }

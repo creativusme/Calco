@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,6 +22,7 @@ from . import __version__, presets, tools
 from .bundle import BundleError
 from .export import export_model
 from .library import Library
+from .pairing import Pairing, encode_ip
 
 PORT = 7878
 
@@ -55,6 +56,9 @@ def lan_addresses() -> list[str]:
 
 def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=None, net=None) -> FastAPI:
     lib = library or Library()
+    pairing = Pairing(lib.root)
+    if usb is not None:
+        usb.pin = lambda: pairing.pin
     app = FastAPI(title="Calco engine", version=__version__)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     busy = {"tools": False, "demo": False}
@@ -62,6 +66,12 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
 
     @app.middleware("http")
     async def remember_phone(request: Request, call_next):
+        # anything not coming from this computer must carry the pairing password
+        host = request.client.host if request.client else ""
+        local = host in ("127.0.0.1", "::1", "localhost", "testclient")
+        if request.url.path.startswith("/api/") and (not local or request.headers.get("x-calco-device")):
+            if not pairing.check(request.headers.get("x-calco-pin")):
+                return JSONResponse({"detail": "wrong or missing password"}, status_code=401)
         name = request.headers.get("x-calco-device")
         if name:
             wifi_phone.update(name=name, address=request.client.host if request.client else None, seen=time.time())
@@ -111,6 +121,20 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
     def hello():
         """What the phone calls every few seconds to show 'Connected' and find this computer's name."""
         return {"name": "Calco", "version": __version__, "hostname": socket.gethostname()}
+
+    @app.get("/api/pairing")
+    def pairing_info(request: Request):
+        """Network code and password to type on the phone (only shown on this computer)."""
+        if request.client and request.client.host not in ("127.0.0.1", "::1", "testclient"):
+            raise HTTPException(403, "only on the computer itself")
+        addrs = lan_addresses()
+        return {"codes": [{"address": a, "code": encode_ip(a)} for a in addrs], "pin": pairing.pin, "port": PORT}
+
+    @app.post("/api/pairing/new")
+    def pairing_new(request: Request):
+        if request.client and request.client.host not in ("127.0.0.1", "::1", "testclient"):
+            raise HTTPException(403, "only on the computer itself")
+        return {"pin": pairing.new_pin()}
 
     @app.post("/api/network/recheck")
     def recheck_network():
@@ -350,7 +374,7 @@ def serve(host: str = "0.0.0.0", port: int = PORT, library: Path | None = None) 
 
     lib = Library(library)
     app = create_app(lib, ui, usb=UsbBridge(lib).start(), net=NetWatch().start())
-    zc = advertise(port)
+    zc = None  # discovery removed: the phone connects with the network code and password
     print(f"Calco engine {__version__} on http://localhost:{port}  (phone: {', '.join(lan_addresses()) or 'no LAN address'})")
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")

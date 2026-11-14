@@ -13,8 +13,8 @@ targets:
       path: Calco/Info.plist
       properties:
         CFBundleDisplayName: Calco
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "3"
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arkit]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
@@ -22,7 +22,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSCameraUsageDescription: Calco uses the camera and LiDAR to scan objects in 3D.
         NSLocalNetworkUsageDescription: Calco sends your scans to the Calco app on your computer over the local network.
-        NSBonjourServices: [_calco._tcp]
+        NSMotionUsageDescription: Calco takes close-up photos automatically when the phone is held still.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSAllowsArbitraryLoads: true

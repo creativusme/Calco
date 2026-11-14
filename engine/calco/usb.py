@@ -163,6 +163,7 @@ class UsbBridge:
         self._devices = devices
         self._connector = connector
         self.available: bool | None = None  # usbmuxd present
+        self.pin: Callable[[], str] = lambda: ""  # pairing password, set by the server
         self.phone: PhoneLink | None = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -202,11 +203,17 @@ class UsbBridge:
         devices.sort(key=lambda d: d["link"] != "usb")
         for dev in devices:
             connect = lambda d=dev: self._connector(d["id"], PHONE_PORT)  # noqa: E731
-            link_header = {"X-Calco-Link": "cable" if dev["link"] == "usb" else "wifi-sync"}
+            link_header = {"X-Calco-Link": "cable" if dev["link"] == "usb" else "wifi-sync", "X-Calco-Pin": self.pin()}
             try:
                 hello = json.loads(http(connect, "GET", "/calco/hello", headers=link_header))
-            except (OSError, ValueError):
+            except UsbError as e:
+                if "answered 401" in str(e):  # Calco is open but paired with another password
+                    with self._lock:
+                        self.phone = PhoneLink("iPhone", dev["link"], time.time(), error="not paired")
+                    return
                 continue  # app not open on this device
+            except (OSError, ValueError):
+                continue
             with self._lock:
                 prev = self.phone
                 self.phone = PhoneLink(hello.get("name", "iPhone"), dev["link"], time.time())

@@ -37,7 +37,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     private var inFlight = false
     private var lastShot: simd_float4x4?
     private var lastPose: (transform: simd_float4x4, time: TimeInterval)?
-    private var speed: Float = 0
+    private var speed: Float = 0  // m/s, smoothed
+    private var turnRate: Float = 0  // degrees/s, smoothed
+    private var arConfig: ARWorldTrackingConfiguration?
     private var focus: simd_float3?
     private var boxNode: SCNNode?
     private let created = Date()
@@ -62,6 +64,11 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         // while this marker exists the scan is incomplete: not listed, not sent to the computer
         fm.createFile(atPath: bundleURL.appendingPathComponent(".recording").path, contents: Data())
         haptic.prepare()
+        UIApplication.shared.isIdleTimerDisabled = true
+        if mode == .macro {
+            hint = "Hold the part 3–15 cm away"
+            return  // close-up mode: AVFoundation camera, no ARKit
+        }
 
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
@@ -76,8 +83,47 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         if let hires = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
             config.videoFormat = hires
         }
+        arConfig = config
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        UIApplication.shared.isIdleTimerDisabled = true
+    }
+
+    /// The close-up camera cannot run while ARKit owns the camera: pause tracking meanwhile.
+    func pauseForDetails() {
+        isRecording = false
+        session.pause()
+    }
+
+    /// Resume without resetting: ARKit relocalizes against the map it already has.
+    func resumeAfterDetails() {
+        if let arConfig { session.run(arConfig) }
+    }
+
+    /// A close-up photo from the macro camera: no pose, no depth, intrinsics unknown (0) so the
+    /// engine estimates them from the photo's EXIF data.
+    func appendPhoto(jpeg: Data, width: Int, height: Int) {
+        ioQueue.async { [self] in
+            let id = nextID
+            nextID += 1
+            let name = String(format: "%06d", id)
+            let record = FrameRecord(
+                id: id, image: "frames/\(name).jpg", width: width, height: height,
+                timestamp: ProcessInfo.processInfo.systemUptime, intrinsics: [0, 0, Float(width) / 2, Float(height) / 2],
+                pose: nil, tracking: "none", depth: nil, exposure: nil)
+            do {
+                try jpeg.write(to: bundleURL.appendingPathComponent(record.image))
+                records.append(record)
+                if records.count % 10 == 0 { writeManifest() }
+                let count = records.count
+                DispatchQueue.main.async {
+                    self.frameCount = count
+                    self.shutterCount += 1
+                    self.haptic.impactOccurred(intensity: 0.7)
+                    self.haptic.prepare()
+                }
+            } catch {
+                DispatchQueue.main.async { self.warning = "Could not save the photo: \(error.localizedDescription)" }
+            }
+        }
     }
 
     func stop() {
@@ -214,16 +260,19 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let t = frame.camera.transform
         if let last = lastPose, frame.timestamp > last.time {
+            let dt = Float(frame.timestamp - last.time)
             let d = simd_distance(simd_make_float3(t.columns.3), simd_make_float3(last.transform.columns.3))
-            let v = d / Float(frame.timestamp - last.time)
-            speed = 0.8 * speed + 0.2 * v
+            let cosTurn = simd_dot(simd_make_float3(t.columns.2), simd_make_float3(last.transform.columns.2))
+            let turn = acos(max(-1, min(1, cosTurn))) * 180 / .pi
+            speed = 0.8 * speed + 0.2 * d / dt
+            turnRate = 0.8 * turnRate + 0.2 * turn / dt
         }
         lastPose = (t, frame.timestamp)
 
         let tracking = Self.trackingProblem(frame.camera.trackingState)
         updateGuidance(frame: frame, tracking: tracking)
 
-        guard isRecording, !inFlight, tracking == nil, speed < 0.12 else { return }
+        guard isRecording, !inFlight, tracking == nil, speed < 0.05, turnRate < 12 else { return }
         if let last = lastShot {
             let step = mode.shutterStep
             let moved = simd_distance(simd_make_float3(t.columns.3), simd_make_float3(last.columns.3))
@@ -393,8 +442,8 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         var newWarning: String?
         if let tracking {
             newWarning = tracking
-        } else if isRecording, speed > 0.12 {
-            newWarning = "Slow down"
+        } else if isRecording, speed > 0.12 || turnRate > 35 {
+            newWarning = "Slow down: photos are taken when you hold still"
         } else if let light = frame.lightEstimate, light.ambientIntensity < 200 {
             newWarning = "Too dark: add light for sharp photos"
         }

@@ -132,8 +132,6 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
       </div>
       {info && (
         <dl className="kv">
-          <dt>Wi-Fi address</dt>
-          <dd className="mono">{info.addresses.length ? `${info.addresses[0]}:${info.port}` : "no network"}</dd>
           <dt>GPU</dt>
           <dd>{info.tools.gpu ? (info.tools.colmap_cuda ? "In use" : "Not used yet") : "None found"}</dd>
         </dl>
@@ -143,6 +141,31 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
 }
 
 const LINK_LABEL = { cable: "Cable", wifi: "Wi-Fi", "wifi-sync": "Wi-Fi sync" } as const;
+
+/** Network code + password the phone needs to connect (shown only on this computer). */
+function PairingCodes() {
+  const [data, setData] = useState<{ codes: { address: string; code: string }[]; pin: string } | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => { api.pairing().then(setData).catch(() => setError(true)); }, []);
+  if (error) return <div className="error-text small">Pairing details unavailable.</div>;
+  if (!data) return null;
+  const regenerate = async () => {
+    if (!confirm("Make a new password? Phones paired with the old one will have to type the new one.")) return;
+    const { pin } = await api.newPin();
+    setData({ ...data, pin });
+  };
+  return (
+    <dl className="pairing">
+      <dt>Network code</dt>
+      <dd className="mono">{data.codes.length ? data.codes.map((c) => <span key={c.code} title={c.address}>{c.code}</span>) : "no network"}</dd>
+      <dt>Password</dt>
+      <dd className="mono">
+        {data.pin.slice(0, 3)}{NBSP}{data.pin.slice(3)}
+        <button className="link small" onClick={regenerate}>New</button>
+      </dd>
+    </dl>
+  );
+}
 
 /** How the phone is connected, what it is sending, and why Wi-Fi may not work. */
 function PhoneCard({ info }: { info: Info }) {
@@ -168,11 +191,16 @@ function PhoneCard({ info }: { info: Info }) {
         </>
       )}
       {p.connected && !t && <div className="muted small">{p.error ? <span className="error-text">{p.error}</span> : "Up to date. New scans arrive by themselves."}</div>}
-      {!p.connected && (
-        <div className="muted small">
-          Open Calco on the iPhone, then plug in the cable{wifiBlocked ? "" : " or use the same Wi-Fi"}.
-          {p.usb_service === false && <span className="error-text"> Cable transfer needs Apple Devices or iTunes installed.</span>}
-        </div>
+      {(!p.connected || p.error === "not paired") && (
+        <>
+          <div className="muted small">
+            {p.error === "not paired"
+              ? "The iPhone is plugged in but not paired: on the phone open Settings → Connect and type:"
+              : "On the iPhone open Settings → Connect and type:"}
+          </div>
+          <PairingCodes />
+          {p.usb_service === false && <div className="error-text small">Cable transfer needs Apple Devices or iTunes installed.</div>}
+        </>
       )}
       {wifiBlocked && (
         <button className="warn-line" onClick={() => setHelp(true)}>

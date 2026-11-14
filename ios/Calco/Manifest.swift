@@ -54,7 +54,7 @@ struct FrameRecord: Codable {
 }
 
 enum ScanMode: String, CaseIterable, Identifiable {
-    case object, person, space
+    case object, macro, person, space
     var id: String { rawValue }
 
     var title: String {
@@ -62,6 +62,7 @@ enum ScanMode: String, CaseIterable, Identifiable {
         case .object: return "Object"
         case .person: return "Person"
         case .space: return "Space"
+        case .macro: return "Macro"
         }
     }
 
@@ -70,6 +71,7 @@ enum ScanMode: String, CaseIterable, Identifiable {
         case .object: return "Parts and things you can walk around. Use the scan mat for exact scale."
         case .person: return "Busts and people sitting still."
         case .space: return "Rooms, large machines, exteriors."
+        case .macro: return "Small parts, 2–5 cm, up close. Uses the lens that focuses closest. Put the part on the scan mat for scale."
         }
     }
 
@@ -79,6 +81,7 @@ enum ScanMode: String, CaseIterable, Identifiable {
         case .object: return (0.04, 8)
         case .person: return (0.06, 8)
         case .space: return (0.25, 15)
+        case .macro: return (0.01, 6)
         }
     }
 
@@ -87,6 +90,7 @@ enum ScanMode: String, CaseIterable, Identifiable {
         case .object: return 0.3
         case .person: return 0.8
         case .space: return 3.0
+        case .macro: return 0.06
         }
     }
 }

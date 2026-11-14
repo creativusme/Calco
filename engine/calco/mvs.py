@@ -27,10 +27,24 @@ def _scene(dense_dir: Path, mvs: Path, log) -> None:
     _mvs("InterfaceCOLMAP", ["-i", dense_dir, "-o", mvs / "scene.mvs", "--image-folder", dense_dir / "images"], mvs, log)
 
 
-def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress) -> Path:
+def _limit_views(dense_dir: Path, quality: Quality, score: dict | None, log) -> int:
+    """Compute depth maps for a well-spread subset of the photos only (time grows with every photo)."""
+    from .select import spread_subset
+
+    names = sorted(p.name for p in (dense_dir / "images").iterdir())
+    chosen = spread_subset(names, quality.dense_views, score)
+    stereo = dense_dir / "stereo"
+    (stereo / "patch-match.cfg").write_text("".join(f"{n}\n__auto__, 8\n" for n in chosen), encoding="utf-8")
+    (stereo / "fusion.cfg").write_text("".join(f"{n}\n" for n in chosen), encoding="utf-8")
+    if len(chosen) < len(names):
+        log(f"Depth maps for {len(chosen)} of {len(names)} photos (spread over the capture, sharpest first)")
+    return len(chosen)
+
+
+def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress, score=None) -> Path:
     exe = tools.colmap_bin()
     progress(0.03, "Computing depth maps (GPU)")
-    n_views = max(1, len(list((dense_dir / "images").glob("*"))))
+    n_views = max(1, _limit_views(dense_dir, quality, score, log))
     seen = [0]
 
     def views(line: str) -> None:  # two passes over all photos: photometric, then geometric
@@ -75,7 +89,7 @@ def _dense_cpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress) -> P
 
 
 def dense_mesh(dense_dir: Path, work: Path, quality: Quality, log=print, progress=lambda f, m="": None,
-               use_gpu: bool = True) -> tuple[Path, str]:
+               use_gpu: bool = True, score: dict | None = None) -> tuple[Path, str]:
     """Undistorted COLMAP model -> raw mesh. Returns (PLY path, "gpu" or "cpu")."""
     mvs = work / "mvs"
     mvs.mkdir(parents=True, exist_ok=True)
@@ -86,7 +100,7 @@ def dense_mesh(dense_dir: Path, work: Path, quality: Quality, log=print, progres
     mesh, computed_on = None, "cpu"
     if GPU_DENSE and use_gpu and tools.colmap_bin() and tools.have_gpu():
         try:
-            mesh, computed_on = _dense_gpu(dense_dir, mvs, quality, log, progress), "gpu"
+            mesh, computed_on = _dense_gpu(dense_dir, mvs, quality, log, progress, score), "gpu"
         except RuntimeError as e:
             log(f"GPU dense reconstruction failed, using the CPU instead: {e}")
     if mesh is None:

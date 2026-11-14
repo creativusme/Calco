@@ -84,6 +84,21 @@ def keep_largest(mesh: Mesh, min_ratio: float = 0.05) -> Mesh:
     return mesh.select_faces(np.isin(face_label, good))
 
 
+def drop_flat_pieces(mesh: Mesh, height: np.ndarray, min_height: float) -> Mesh:
+    """Remove connected pieces that never rise min_height above the support plane (table leftovers)."""
+    n = len(mesh.v)
+    if n == 0:
+        return mesh
+    rows = np.concatenate([mesh.f[:, 0], mesh.f[:, 1]])
+    cols = np.concatenate([mesh.f[:, 1], mesh.f[:, 2]])
+    graph = coo_matrix((np.ones(len(rows), bool), (rows, cols)), shape=(n, n))
+    _, labels = connected_components(graph, directed=False)
+    top = np.full(labels.max() + 1, -np.inf)
+    np.maximum.at(top, labels, height)
+    keep = top[labels[mesh.f[:, 0]]] >= min_height
+    return mesh.select_faces(keep) if keep.any() else mesh
+
+
 def tidy(mesh: Mesh) -> Mesh:
     m = mesh.to_o3d()
     m.remove_duplicated_vertices()

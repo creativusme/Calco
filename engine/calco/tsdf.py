@@ -51,10 +51,15 @@ def fuse_depth(bundle: Bundle, progress=lambda f, m="": None) -> Mesh:
         E = o3d.core.Tensor(w2c)
         d_img = o3d.t.geometry.Image(np.ascontiguousarray(depth))
         c_img = o3d.t.geometry.Image(np.ascontiguousarray(color.astype(np.float32) / 255.0))
-        blocks = grid.compute_unique_block_coordinates(d_img, K, E, 1.0, max_depth, trunc_mult)
-        if blocks.shape[0] == 0:
-            continue
-        grid.integrate(blocks, d_img, c_img, K, E, 1.0, max_depth, trunc_mult)
+        if not (depth > 0).any():
+            continue  # nothing of this frame falls inside the crop box
+        try:
+            blocks = grid.compute_unique_block_coordinates(d_img, K, E, 1.0, max_depth, trunc_mult)
+            if blocks.shape[0] == 0:
+                continue
+            grid.integrate(blocks, d_img, c_img, K, E, 1.0, max_depth, trunc_mult)
+        except RuntimeError:
+            continue  # Open3D refuses frames that touch no voxel block
         progress((i + 1) / len(frames), f"Fusing depth {i + 1}/{len(frames)}")
 
     mesh = grid.extract_triangle_mesh(weight_threshold=1.5).to_legacy()

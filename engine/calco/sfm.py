@@ -43,19 +43,64 @@ def _pose_pairs(bundle: Bundle, neighbours: int = 16) -> list[tuple[str, str]]:
         for j in np.argsort(dist)[:neighbours]:
             if np.isfinite(dist[j]):
                 pairs.add(tuple(sorted((frames[i].image.name, frames[j].image.name))))
-    # every image must have a pair even if tracking was lost around it
+    # photos without a pose (detail/macro shots, or tracking lost) are matched with every photo
     posed = {f.image.name for f in frames}
     names = [f.image.name for f in bundle.frames]
-    for k, n in enumerate(names):
+    for n in names:
         if n not in posed:
-            for m in names[max(0, k - 5):k + 6]:
+            for m in names:
                 if m != n:
                     pairs.add(tuple(sorted((n, m))))
     return sorted(pairs)
 
 
+def _open_db(path: Path):
+    return pycolmap.Database.open(str(path)) if hasattr(pycolmap.Database, "open") else pycolmap.Database(str(path))
+
+
+def _known_pose_model(bundle: Bundle, db: Path, image_dir: Path, out: Path, log) -> "pycolmap.Reconstruction | None":
+    """Triangulate with the phone's poses, then refine everything with bundle adjustment.
+
+    Much faster than solving the cameras from scratch (no registration loop) and it cannot
+    build a wrong 'fork' of the model on repetitive textures, which incremental mapping does.
+    Returns None when the result does not look right, so the caller can fall back.
+    """
+    from scipy.spatial.transform import Rotation
+
+    by = {f.image.name: f for f in bundle.frames if f.pose is not None}
+    conn = _open_db(db)
+    cams, imgs = conn.read_all_cameras(), conn.read_all_images()
+    conn.close()
+    txt = out / "known"
+    txt.mkdir(parents=True, exist_ok=True)
+    with open(txt / "cameras.txt", "w") as fh:
+        for c in cams:
+            fh.write(f"{c.camera_id} {c.model.name} {c.width} {c.height} {' '.join(repr(float(p)) for p in c.params)}\n")
+    with open(txt / "images.txt", "w") as fh:
+        for im in imgs:
+            f = by.get(im.name)
+            if f is None:
+                continue  # photos without a phone pose are registered afterwards
+            w2c = f.world_to_cam_cv
+            x, y, z, w = Rotation.from_matrix(w2c[:3, :3]).as_quat()
+            t = w2c[:3, 3]
+            fh.write(f"{im.image_id} {w} {x} {y} {z} {t[0]} {t[1]} {t[2]} {im.camera_id} {im.name}\n\n")
+    (txt / "points3D.txt").write_text("")
+
+    rec = pycolmap.triangulate_points(pycolmap.Reconstruction(txt), db, image_dir, out / "triangulated")
+    if len(rec.points3D) < 500:
+        log(f"Triangulating with the phone poses gave only {len(rec.points3D)} points")
+        return None
+    ba = pycolmap.BundleAdjustmentOptions()
+    ba.refine_principal_point = False
+    pycolmap.bundle_adjustment(rec, ba)
+    log(f"Phone-pose model: {rec.num_reg_images()} photos, {len(rec.points3D)} points, "
+        f"reprojection {rec.compute_mean_reprojection_error():.2f} px")
+    return rec
+
+
 def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=lambda f, m="": None,
-            use_gpu: bool = True) -> SfmResult:
+            use_gpu: bool = True, photo_size: int | None = None) -> SfmResult:
     sfm_dir = work / "sfm"
     if sfm_dir.exists():
         shutil.rmtree(sfm_dir)
@@ -136,16 +181,36 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     if computed_on == "cpu":
         on_cpu()
 
-    # --- mapping
+    # --- cameras: start from the phone's poses when there are any, else solve from the photos
     progress(0.6, "Solving cameras")
     opts = pycolmap.IncrementalPipelineOptions()
     opts.multiple_models = False
     opts.ba_refine_principal_point = False
-    models = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts)
-    if not models:
-        raise RuntimeError("Photo alignment failed: not enough overlap or texture between the photos. "
-                           "Try the Draft (LiDAR) preset, or re-shoot with more overlap.")
-    rec = max(models.values(), key=lambda r: r.num_reg_images())
+    rec = None
+    if bundle.has_poses:
+        try:
+            rec = _known_pose_model(bundle, db, image_dir, sfm_dir, log)
+        except Exception as e:  # any problem: the classic path below still works
+            log(f"Phone-pose triangulation failed ({e}); solving the cameras from the photos instead")
+            rec = None
+        unposed = sum(f.pose is None for f in bundle.frames)
+        if rec is not None and unposed:
+            # detail / macro photos have no phone pose: register them against the fixed model
+            progress(0.75, f"Placing {unposed} detail photos")
+            seed = sfm_dir / "seed"
+            seed.mkdir(exist_ok=True)
+            rec.write(seed)
+            opts.fix_existing_frames = True
+            more = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts, input_path=seed)
+            if more:
+                rec = max(more.values(), key=lambda r: r.num_reg_images())
+            opts.fix_existing_frames = False
+    if rec is None:
+        models = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts)
+        if not models:
+            raise RuntimeError("Photo alignment failed: not enough overlap or texture between the photos. "
+                               "Try the Draft (LiDAR) preset, or re-shoot with more overlap.")
+        rec = max(models.values(), key=lambda r: r.num_reg_images())
     registered = rec.num_reg_images()
     if registered < 0.6 * len(names):
         warnings.append(f"Only {registered} of {len(names)} photos could be aligned.")
@@ -182,7 +247,7 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     if dense_dir.exists():
         shutil.rmtree(dense_dir)
     und = pycolmap.UndistortCameraOptions()
-    und.max_image_size = quality.photo_size
+    und.max_image_size = photo_size or quality.photo_size
     # 8 source photos per depth map: enough overlap for a walk-around capture, about 2x faster than 20
     pycolmap.undistort_images(dense_dir, model_dir, image_dir, output_type="COLMAP", undistort_options=und,
                               num_patch_match_src_images=8)

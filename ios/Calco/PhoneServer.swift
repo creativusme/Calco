@@ -19,6 +19,8 @@ final class PhoneServer: ObservableObject {
     @Published private(set) var link: String = "cable"
     @Published private(set) var sending: String?   // name of the capture being pulled
     @Published private(set) var listening = false
+    /// Last time a computer asked without the right password (plugged in but not paired).
+    @Published private(set) var refused: Date?
 
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "calco.phone-server")
@@ -92,6 +94,11 @@ final class PhoneServer: ObservableObject {
             if let colon = line.firstIndex(of: ":") {
                 headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             }
+        }
+        // only the paired computer may read the scans (this port is also reachable over Wi-Fi)
+        guard Pairing.check(headers["x-calco-pin"]) else {
+            DispatchQueue.main.async { self.refused = Date() }
+            return respond(conn, status: 401, body: Data("{\"detail\":\"not paired\"}".utf8))
         }
         let link = headers["x-calco-link"] ?? "cable"
         DispatchQueue.main.async {
@@ -194,7 +201,7 @@ final class PhoneServer: ObservableObject {
     }
 
     private func respond(_ conn: NWConnection, status: Int, body: Data) {
-        let reason = [200: "OK", 400: "Bad Request", 404: "Not Found"][status] ?? "Error"
+        let reason = [200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found"][status] ?? "Error"
         var data = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Length: \(body.count)\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n".utf8)
         data.append(body)
         conn.send(content: data, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in conn.cancel() })
