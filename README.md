@@ -30,6 +30,8 @@ cd engine && python -m venv .venv && .venv\Scripts\python -m pip install -e .[de
 
 ## iPhone app
 
+Scans reach the computer in two ways: **by cable** (plug the iPhone in with Calco open on both; the computer pulls what is missing through Apple's USB service, nothing to configure) or **over Wi-Fi** (needs Windows to accept incoming connections: Calco on the computer tells you when it does not and how to fix it, `tools/allow-wifi.ps1`).
+
 There is no Mac in this project: GitHub Actions builds an unsigned IPA (`.github/workflows/ios.yml`, artifact `Calco-unsigned-ipa`) that you sign and install with Sideloadly or AltStore. Needs an iPhone with LiDAR (12 Pro or later) and iOS 17.
 
 ## How a scan becomes a model

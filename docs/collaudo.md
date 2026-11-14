@@ -9,7 +9,7 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 ## A. Computer (una volta sola, ~15 min)
 
 - ☐ **A1** Doppio clic su `Start Calco.cmd`. Si apre il browser su `http://localhost:7878` e in basso a sinistra compare **Engine ready** con la scheda video (RTX 3060).
-- ☐ **A2** Windows chiede il permesso del firewall per Python: spunta **Reti private** e consenti. *Senza questo il telefono non vede il PC.*
+- ☐ **A2** In basso a sinistra c'è il riquadro del telefono. Se compare in rosso **Wi-Fi transfer blocked by Windows**, apri **How to fix** e segui i passi (PowerShell come amministratore, `tools\allow-wifi.ps1`), poi **I Ran It · Check Again**: la scritta rossa sparisce. *Serve solo per il Wi-Fi: il cavo funziona sempre.*
 - ☐ **A3** Clic su **Create a demo capture**. Dopo circa un minuto compare "Synthetic box + cylinder" nella lista.
 - ☐ **A4** Qualità **Draft** → **Process**. Finisce in meno di un minuto; il modello ruota col mouse; le misure sono circa 85 × 63 × 83 mm (l'oggetto vero è 80 × 60 × 80: il LiDAR sbaglia di qualche mm, è normale).
 - ☐ **A5** Qualità **Medium** → se richiesto **Install OpenMVS**, poi **Process**. Finisce in pochi minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
@@ -45,16 +45,18 @@ In entrambi i casi:
 - ☐ **C1** Su GitHub: repository **Calco → Actions → iOS app → ultima esecuzione verde → Artifacts → `Calco-unsigned-ipa`**. Scarica lo zip ed estrai `Calco-unsigned.ipa`.
 - ☐ **C2** Installa con Sideloadly. L'app si apre sulla lista vuota "No scans yet".
 - ☐ **C3** **New scan → Object**: consenti la **fotocamera**. Si vede l'immagine dal vivo con la griglia bianca del LiDAR che copre le superfici.
-- ☐ **C4** Rotellina **Settings**: consenti la **rete locale**. Con Calco aperto sul PC e la stessa Wi-Fi, il PC compare in *Computers found*.
-- ☐ **C5** Se non compare: scrivi a mano l'indirizzo mostrato in basso a sinistra sul PC (es. `192.168.1.20:7878`).
+- ☐ **C4** L'icona dell'app è il quadrato lime su fondo scuro. Alla prima apertura consenti la **rete locale**.
+- ☐ **C5** In alto c'è sempre la barra di connessione: verde = collegato (dice se via **cavo** o **Wi-Fi** e il nome del PC), arancione = PC trovato ma non risponde (con il motivo), grigio = nessun PC. Toccala per le impostazioni.
+- ☐ **C6** Se il Wi-Fi non trova il PC da solo: Impostazioni → scrivi l'indirizzo mostrato in basso a sinistra sul PC (es. `192.168.1.20:7878`) → **Test connection**.
 
 ## D. Prima scansione di prova (in casa, oggetto facile)
 
 Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci le misure col calibro. Buona luce diffusa, niente sole diretto.
 
 - ☐ **D1** Oggetto al centro del tappetino. **New scan → Object**.
-- ☐ **D2** Inquadra l'oggetto, **Place box**: compare un cubo arancione attorno all'oggetto. Regola la dimensione col cursore finché lo contiene tutto con un po' di margine.
-- ☐ **D3** Tocca il pulsante rosso: parte lo scatto automatico. Il contatore foto sale mentre ti muovi; **non** scatta se stai fermo.
+- ☐ **D2** Inquadra l'oggetto, **Place box**: compare un cubo con spigoli spessi lime, sempre visibile anche dietro l'oggetto. Regola la dimensione col cursore finché lo contiene tutto con un po' di margine; **Move box** lo risposta dove stai puntando.
+- ☐ **D2b** Le superfici già viste dal LiDAR si colorano di un velo lime trasparente: è l'anteprima di cosa è stato scansionato.
+- ☐ **D3** Tocca il pulsante rosso: parte lo scatto automatico. A ogni foto senti una **vibrazione** leggera e il bordo dello schermo lampeggia lime. Il contatore sale mentre ti muovi; **non** scatta se stai fermo.
 - ☐ **D4** Muoviti troppo in fretta: compare **Slow down** e smette di scattare. Rallenta: riprende.
 - ☐ **D5** Fai un giro completo ad altezza oggetto, poi un secondo giro dall'alto (~45°). L'anello di copertura in alto si riempie di verde (anello interno = giro basso, esterno = giro alto).
 - ☐ **D6** Puntini bianchi restano sospesi nei punti da cui hai scattato.
@@ -63,9 +65,19 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 ## E. Invio al computer
 
-- ☐ **E1** **Send**: la percentuale sale, alla fine spunta verde. Sul PC la scansione compare da sola in lista entro un paio di secondi.
-- ☐ **E2** Ripresa: avvia un **Send**, a metà spegni il Wi-Fi del telefono (errore rosso), riaccendi, **Send** di nuovo: riparte da dove era arrivato, non da zero.
-- ☐ **E3** Riserva senza rete: collega l'iPhone al PC, app **File**/iTunes → Calco → copia la cartella `….calco` in `C:\Users\User\Calco\captures\`. Compare in lista.
+**Via cavo (la strada più sicura, niente da configurare)**
+- ☐ **E1** Calco aperto sul PC e sul telefono, collega il cavo (il telefono deve fidarsi del PC, come per Sideloadly). Entro 2–3 secondi: sul telefono barra verde **Connected by cable**, sul PC riquadro **Cable** con il nome dell'iPhone.
+- ☐ **E2** Le scansioni non ancora inviate partono da sole: sul PC compare *Receiving “…” 45%*, sul telefono *Sending …*. Alla fine la scansione è nella lista del PC e sul telefono ha la spunta verde.
+- ☐ **E3** Ripresa: stacca il cavo a metà trasferimento, ricollegalo: riparte dai file mancanti, non da zero.
+- ☐ **E4** Cancella sul PC una scansione già ricevuta e ricollega il cavo: **non** deve tornare (il telefono sa che è già stata inviata).
+
+**Via Wi-Fi (dopo A2)**
+- ☐ **E5** Stessa Wi-Fi: barra verde **Connected by Wi-Fi · nome PC**. Con *Send new scans automatically* attivo, una scansione nuova parte da sola appena premi **Done**; altrimenti **Send** sulla riga.
+- ☐ **E6** Se c'è un errore, sotto la scansione compare il motivo in rosso (es. il PC non risponde → firewall).
+
+**Pulizia del telefono**
+- ☐ **E7** Menu **⋯** in alto a destra → **Delete sent scans**: chiede conferma e cancella solo quelle già sul PC.
+- ☐ **E8** **Select** in alto a sinistra → spunta alcune scansioni → **Delete (n)**. Se tra queste ce n'è una non ancora inviata, l'avviso lo dice. Funziona anche lo swipe verso sinistra su una riga.
 
 ## F. Elaborazione e precisione (il test che conta)
 

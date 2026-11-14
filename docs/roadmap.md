@@ -17,10 +17,11 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | 3D-printable mat (STL) | Files generated and dimensions checked; **never printed** |
 | Object isolation, flat closed base | **Verified** on synthetic data |
 | Export GLB, OBJ, STL, 3MF, PLY | **Verified** by tests (units, up axis) |
-| Server + upload protocol | **Verified** by tests (resume, validation, path traversal) |
+| Wi-Fi upload (phone pushes) | **Verified** by tests (resume, validation, path traversal). On the dev PC it was blocked by Windows Firewall (block rule for Python + Public network): detected and explained in the UI, fixed by `tools/allow-wifi.ps1` that the owner runs |
+| Cable transfer (computer pulls via usbmuxd) | **Verified** by tests against a fake phone (pull, resume, no re-download of deleted scans). usbmuxd answers on the dev PC. **Never tried with the real phone** |
 | Desktop UI in the browser | **Verified** by hand: library, process, tabs, viewer, two-point measure, calibration, export |
 | Desktop Tauri shell | Written, **never compiled** (no Rust on the dev machine) |
-| iPhone app | **Compiles** in CI (unsigned IPA artifact). **Never run on a phone** |
+| iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.1 on the phone: capture works, Wi-Fi transfer failed (firewall). 0.2 (cable, connection bar, delete, haptics, box, live mesh, icon) **not run yet** |
 | Real captures from a phone | **None yet**. Everything above is from the synthetic scene |
 
 ## GPU
