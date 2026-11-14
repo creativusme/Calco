@@ -183,7 +183,9 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
         shutil.rmtree(dense_dir)
     und = pycolmap.UndistortCameraOptions()
     und.max_image_size = quality.photo_size
-    pycolmap.undistort_images(dense_dir, model_dir, image_dir, output_type="COLMAP", undistort_options=und)
+    # 8 source photos per depth map: enough overlap for a walk-around capture, about 2x faster than 20
+    pycolmap.undistort_images(dense_dir, model_dir, image_dir, output_type="COLMAP", undistort_options=und,
+                              num_patch_match_src_images=8)
 
     urec = pycolmap.Reconstruction(dense_dir / "sparse")
     views = []

@@ -97,9 +97,20 @@ function CaptureStatus({ capture }: { capture: Capture }) {
 }
 
 function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean }) {
+  const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: Event) => {
+      const el = menu.current;
+      if (!el?.open) return;
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !el.contains(e.target as Node)) el.open = false;
+    };
+    addEventListener("pointerdown", close);
+    addEventListener("keydown", close);
+    return () => { removeEventListener("pointerdown", close); removeEventListener("keydown", close); };
+  }, []);
   return (
     <div className="sidebar-foot">
-      <details className="menu">
+      <details className="menu" ref={menu}>
         <summary className="button wide">Scan Mat</summary>
         <div className="menu-body">
           <div className="label">Print on paper, at 100%</div>

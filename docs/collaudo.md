@@ -18,7 +18,8 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 - ☐ **A8** Export **Blender / render** → apri il GLB in Blender: texture visibile, oggetto dritto.
 - ☐ **A9** Calibrazione su un lato: scheda **Result**, scegli il lato X, scrivi `100`, **Apply Calibration**. Le misure cambiano in proporzione; **Reset calibration** le riporta com'erano.
 - ☐ **A10** Calibrazione su due punti: **Measure** sopra il modello, clic su due punti, compare la distanza; scrivi la lunghezza vera e **Calibrate**.
-- ☐ **A11** GPU: nella scheda **Process** premi **Enable GPU** (scarica 415 MB una volta). In basso a sinistra compare **GPU: In use** e nel risultato **Computed on: GPU**.
+- ☐ **A11** GPU: se nella scheda **Process** compare **Enable GPU**, premilo (scarica 415 MB una volta; su questo PC è già installato). In basso a sinistra deve esserci **GPU: In use** e, dopo un'elaborazione Medium, nella scheda **Result** **Computed on: GPU**. Durante il calcolo la barra in basso mostra *Computing depth maps (GPU) xx%*.
+- ☐ **A12** Prova **High** sulla demo: più lento di Medium (le foto sono usate a 2000 px), misure uguali o migliori. Annota il tempo: `______`.
 
 ## B. Tappetino di scansione (una volta sola)
 

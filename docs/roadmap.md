@@ -8,9 +8,10 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 |---|---|
 | Capture format v1 | Specified; engine reads it; synthetic generator writes it |
 | Engine: LiDAR fusion (Draft) | **Verified** on synthetic data: 22 s, dimensions within ~5 mm |
-| Engine: photogrammetry, CPU path (OpenMVS) | **Verified** on synthetic data: 36/36 photos, 0.39 px, within 0.7 mm on an 80 mm part |
-| Engine: photogrammetry, GPU path (COLMAP CUDA) | See "GPU" below |
-| Engine: High / Ultra presets | Same code path as Medium with other settings; **not run yet** |
+| Engine: photogrammetry, GPU path (default) | **Verified** on synthetic data, Medium: 4 min, 80.25 × 60.12 × 80.20 mm for an 80 × 60 × 80 part, expected error ±0.57 mm |
+| Engine: photogrammetry, CPU fallback (OpenMVS) | **Verified** on synthetic data, Medium with `"gpu": false`: 7.5 min, 80.34 × 60.32 × 79.87 mm |
+| Engine: High preset | **Verified** on synthetic data from the UI: 8 min on GPU, 80.18 × 60.18 × 80.09 mm, expected error ±0.46 mm |
+| Engine: Ultra preset | Same path as High plus OpenMVS mesh refinement; **not run yet** |
 | Scan mat A5 / A4 / A3 | **Verified** on synthetic data (0.15 mm fit). Not yet tested with a real print |
 | Scan mat that is not flat | **Verified** by simulation: 3 mm curl gives 0.02% scale error, a rolled sheet (20 cm radius) 0.14% |
 | 3D-printable mat (STL) | Files generated and dimensions checked; **never printed** |
@@ -27,11 +28,21 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 `calco tools install-gpu` downloads the official COLMAP 4.2.1 CUDA build (415 MB, bundles the CUDA runtime).
 When it is present and an NVIDIA GPU is found, the engine uses it for:
 
-- feature extraction and matching (measured: 36 photos, 1 s + 3 s on an RTX 3060, about 70 s on the CPU);
-- depth maps (patch-match stereo), then fusion and Delaunay meshing on the CPU.
+- feature extraction and matching: 36 photos in about 4 s on an RTX 3060 (about 70 s on the i3 CPU);
+  the whole "Align photos" stage went from 73 s to 21 s;
+- depth maps (COLMAP patch-match stereo, 8 source photos per view, window step 2): 36 photos at 1000 px
+  in 2 min 40 s. Fusion runs in COLMAP (7 s); meshing is done by OpenMVS from the fused points (about 40 s,
+  half the time of COLMAP's own mesher).
 
 Camera solving (bundle adjustment), mesh clean-up and texturing stay on the CPU. If a GPU step fails, the
 engine logs it and repeats that step on the CPU. `"gpu": false` in the job options forces the CPU.
+`GPU_DENSE` in `engine/calco/mvs.py` switches the GPU depth maps off globally.
+
+Tried and dropped: the OpenMVS CUDA build (v2.4.0) fails on this machine with "CUDA error: named symbol not
+found" before computing anything.
+
+Not tuned yet: depth maps take about 2–2.5 s per photo per pass, slower than an RTX 3060 should manage.
+Worth profiling (image loading, cache size, fewer geometric-consistency iterations) once real captures exist.
 
 ## Why not a home-made photogrammetry engine
 

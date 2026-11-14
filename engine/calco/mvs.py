@@ -12,8 +12,7 @@ from . import tools
 from .presets import Quality
 from .tools import openmvs_bin, run_tool
 
-# GPU depth maps work but are not tuned or verified end to end yet (see docs/roadmap.md): off for now.
-GPU_DENSE = False
+GPU_DENSE = True  # COLMAP CUDA depth maps; set False to always use OpenMVS on the CPU
 
 
 def _mvs(name: str, args: list, cwd: Path, log) -> None:
@@ -40,21 +39,27 @@ def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress) -> P
             done = min(seen[0] / (2 * n_views), 1.0)
             progress(0.03 + 0.66 * done, f"Computing depth maps (GPU) {round(done * 100)}%")
 
+    # window_step 2 evaluates every other pixel of the matching window: about twice as fast,
+    # no visible loss at these resolutions. Source images per view are capped when undistorting.
     run_tool(exe, ["patch_match_stereo", "--workspace_path", dense_dir,
                    "--PatchMatchStereo.max_image_size", quality.dense_size,
                    "--PatchMatchStereo.num_iterations", quality.dense_iterations,
+                   "--PatchMatchStereo.window_step", 2,
                    "--PatchMatchStereo.geom_consistency", 1, "--PatchMatchStereo.cache_size", 16], dense_dir, log,
              on_line=views)
     progress(0.7, "Fusing depth maps")
     run_tool(exe, ["stereo_fusion", "--workspace_path", dense_dir, "--output_path", dense_dir / "fused.ply",
                    "--StereoFusion.max_image_size", quality.dense_size], dense_dir, log)
-    progress(0.82, "Building mesh")
-    mesh = mvs / "mesh.ply"
-    run_tool(exe, ["delaunay_mesher", "--input_path", dense_dir, "--output_path", mesh], dense_dir, log)
-    if not mesh.exists():
-        raise RuntimeError("COLMAP produced no mesh")
+    if not (dense_dir / "fused.ply").exists():
+        raise RuntimeError("COLMAP produced no dense points")
+    # OpenMVS imports fused.ply with its visibility and meshes it about twice as fast as COLMAP's mesher
+    progress(0.8, "Building mesh")
     _scene(dense_dir, mvs, log)
-    return mesh
+    _mvs("ReconstructMesh", ["-i", "scene.mvs", "-o", "mesh.ply", "--crop-to-roi", 0, "--remove-spurious", 30],
+         mvs, log)
+    for dmap in mvs.glob("depth*.dmap"):  # COLMAP depth maps converted on import; not needed any more
+        dmap.unlink()
+    return mvs / "mesh.ply"
 
 
 def _dense_cpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress) -> Path:
