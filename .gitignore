@@ -14,3 +14,4 @@ ios/build/
 *.egg-info/
 *.log
 .claude/
+desktop/public/fonts/

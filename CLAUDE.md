@@ -21,7 +21,9 @@ The phone never talks to the UI: it uploads capture bundles to the **engine serv
 - Precision matters (3D-printed parts must fit): scale comes from the **scan mat** (AprilTag 36h11) or a manual caliper measurement, and every result carries an accuracy report.
 - "Automatic first": the engine picks the pipeline from the bundle (`plan()` in `engine/calco/pipeline.py`); every choice stays overridable.
 - No Mac: iOS builds run in GitHub Actions (`.github/workflows/ios.yml`) and produce an **unsigned IPA** the owner signs with Sideloadly. Swift code cannot be compiled locally, so keep it simple and check CI.
-- External tools (OpenMVS, optional COLMAP CUDA) are downloaded by `calco tools install` into `%LOCALAPPDATA%/Calco/tools`, never committed.
+- External tools are downloaded into `%LOCALAPPDATA%/Calco/tools`, never committed: OpenMVS (`calco tools install`) and the COLMAP CUDA build (`calco tools install-gpu`). The COLMAP binary and `pycolmap` must be the same version: they share the database.
+- The app must never call a cloud or AI service. Anything learned-model based (masks, features) has to run locally.
+- UI identity: instrument look (ink surfaces, hairlines, 3 px corners, one lime signal colour, numbers in mono). Fonts Switzer / Cabinet Grotesk / JetBrains Mono from Fontshare, fetched by `desktop/scripts/fonts.mjs`, not committed.
 
 Read `docs/roadmap.md` first: it says what is verified and what has never been compiled or run.
 

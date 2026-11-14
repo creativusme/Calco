@@ -36,10 +36,11 @@ def main(argv: list[str] | None = None) -> int:
 
     m = sub.add_parser("mat", help="write the printable scan mat PDF")
     m.add_argument("out", type=Path)
-    m.add_argument("--size", default="A4", choices=["A4", "A3"])
+    m.add_argument("--size", default="A4", choices=["A5", "A4", "A3"])
+    m.add_argument("--print3d", action="store_true", help="write a zip of STL files for a 3D-printed mat")
 
-    t = sub.add_parser("tools", help="external tools (OpenMVS)")
-    t.add_argument("action", choices=["install", "status"])
+    t = sub.add_parser("tools", help="external tools: OpenMVS, and COLMAP with CUDA for the GPU")
+    t.add_argument("action", choices=["install", "install-gpu", "status"])
 
     a = ap.parse_args(argv)
 
@@ -71,13 +72,15 @@ def main(argv: list[str] | None = None) -> int:
 
         print(make_synthetic_bundle(a.out, views_per_ring=a.views))
     elif a.cmd == "mat":
-        from .mat import write_mat_pdf
+        from .mat import write_mat_3d, write_mat_pdf
 
-        print(write_mat_pdf(a.out, a.size))
+        print(write_mat_3d(a.out, a.size) if a.print3d else write_mat_pdf(a.out, a.size))
     elif a.cmd == "tools":
         from . import tools
 
         if a.action == "install":
             tools.install_openmvs()
+        elif a.action == "install-gpu":
+            tools.install_colmap()
         print(json.dumps(tools.status(), indent=1))
     return 0

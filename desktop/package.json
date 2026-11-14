@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "fonts": "node scripts/fonts.mjs",
+    "predev": "node scripts/fonts.mjs",
+    "prebuild": "node scripts/fonts.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

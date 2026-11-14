@@ -5,7 +5,9 @@ Scan on site with an iPhone, rebuild on your own computer. No cloud, no subscrip
 Calco is two programs that share one file format:
 
 - **Calco for iPhone** records a *capture*: high-resolution photos, the camera pose of each photo (ARKit), LiDAR depth and a crop box around the object. It guides you while you walk around (automatic shutter, "slow down", coverage ring).
-- **Calco for Windows** turns a capture into a scaled, cleaned, textured 3D model: photogrammetry (COLMAP + OpenMVS) or fast LiDAR fusion, automatic object isolation, millimetre-true scale from a printable scan mat, and export to STL, 3MF, OBJ, GLB and PLY.
+- **Calco for Windows** turns a capture into a scaled, cleaned, textured 3D model: photogrammetry (COLMAP + OpenMVS, on the GPU when you have an NVIDIA card) or fast LiDAR fusion, automatic object isolation, millimetre-true scale from a scan mat you print on paper or in 3D, calibration from a caliper measurement, and export to STL, 3MF, OBJ, GLB and PLY.
+
+Nothing leaves your computer: no cloud, no accounts, no AI service. The only downloads are the open-source tools (OpenMVS, COLMAP) and the UI fonts, once.
 
 Status: early but working end to end on the computer. The iPhone app is written and builds in CI; see `docs/roadmap.md` for what is verified and what is not.
 
@@ -21,6 +23,7 @@ Try it without a phone: **Create a demo capture**, then **Process**.
 # the same, by hand
 cd engine && python -m venv .venv && .venv\Scripts\python -m pip install -e .[dev]
 .venv\Scripts\python -m calco tools install      # OpenMVS, needed for photogrammetry
+.venv\Scripts\python -m calco tools install-gpu  # COLMAP with CUDA (415 MB), optional, much faster
 .venv\Scripts\python -m calco serve              # API + UI on http://localhost:7878
 .venv\Scripts\python -m pytest -q                # tests on a synthetic capture
 ```

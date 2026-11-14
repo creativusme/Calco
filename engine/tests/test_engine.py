@@ -143,3 +143,53 @@ def test_server_upload_and_job_flow(bundle_dir, tmp_path):
     assert client.get(f"/api/captures/{cid}/preview").status_code == 200
     assert client.get("/api/mat.pdf?size=A4").headers["content-type"] == "application/pdf"
     assert client.post("/api/jobs", json={"capture_id": "nope", "options": {}}).status_code == 404
+
+
+def test_every_mat_layout_is_detected():
+    for layout in LAYOUTS.values():
+        tags = detect_tags(render_mat(layout, dpi=150))
+        assert set(tags) == set(layout.tag_corners_page_mm()), layout.name
+
+
+def test_bent_mat_still_gives_the_scale():
+    """A curled sheet must not bias the scale: it comes from neighbouring tags then."""
+    from calco.geom import look_at_arkit
+
+    ref = LAYOUTS["A4"].tag_corners_mat()
+    flip = np.diag([1.0, -1, -1, 1])
+    K = np.array([[3000.0, 0, 2000], [0, 3000, 1500], [0, 0, 1]])
+    radius = 0.4  # metres: the sheet lifts about 3.5 mm at its edges
+
+    def bend(p):
+        th = p[:, 0] / radius
+        return np.stack([radius * np.sin(th), p[:, 1], radius * (1 - np.cos(th))], 1)
+
+    rng = np.random.default_rng(0)
+    projections, observations = [], []
+    for k in range(24):
+        az, el = 2 * np.pi * k / 24, np.radians(35 if k % 2 else 55)
+        eye = 0.45 * np.array([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)])
+        P = K @ np.linalg.inv(look_at_arkit(eye, np.zeros(3), up=(0, 0, 1)) @ flip)[:3]
+        projections.append(P)
+        obs = {}
+        for tid, c in ref.items():
+            x = np.c_[bend(c), np.ones(4)] @ P.T
+            obs[tid] = x[:, :2] / x[:, 2:] + rng.normal(0, 0.15, (4, 2))
+        observations.append(obs)
+    fit = fit_mat(observations, projections)
+    assert fit.method == "neighbours" and fit.rms_mm > 1.0
+    assert abs(fit.scale - 1.0) < 0.001
+
+
+def test_printable_mat_files():
+    import io
+
+    import trimesh
+
+    from calco.mat import mat_3d_files
+
+    files = mat_3d_files("A5")
+    base = trimesh.load(io.BytesIO(files["base.stl"]), file_type="stl")
+    pattern = trimesh.load(io.BytesIO(files["pattern.stl"]), file_type="stl")
+    assert np.allclose(base.extents, [148, 210, 2])
+    assert pattern.bounds[0][2] < 2.0 < pattern.bounds[1][2] and pattern.extents[0] < 148

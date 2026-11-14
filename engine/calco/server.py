@@ -83,14 +83,14 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None) -> Fa
                 "demo_running": busy["demo"]}
 
     @app.post("/api/tools/install")
-    def install_tools():
+    def install_tools(what: str = "openmvs"):
         if busy["tools"]:
             return {"started": False}
         busy["tools"] = True
 
         def work():
             try:
-                tools.install_openmvs(log=lambda m: None)
+                (tools.install_colmap if what == "colmap" else tools.install_openmvs)(log=lambda m: None)
             finally:
                 busy["tools"] = False
 
@@ -107,6 +107,18 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None) -> Fa
         if not path.exists():
             write_mat_pdf(path, size)
         return FileResponse(path, media_type="application/pdf", filename=f"calco-scan-mat-{size}.pdf")
+
+    @app.get("/api/mat.zip")
+    def mat_zip(size: str = "A5"):
+        """3D-printable version of the mat (plate + raised pattern)."""
+        from .mat import LAYOUTS, write_mat_3d
+
+        if size not in LAYOUTS:
+            raise HTTPException(400, f"size must be one of {list(LAYOUTS)}")
+        path = Path(tempfile.gettempdir()) / f"calco-mat-{size}-3d.zip"
+        if not path.exists():
+            write_mat_3d(path, size)
+        return FileResponse(path, media_type="application/zip", filename=f"calco-scan-mat-{size}-3d-print.zip")
 
     @app.post("/api/demo")
     def demo():

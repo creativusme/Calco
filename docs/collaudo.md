@@ -12,22 +12,36 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 - ☐ **A2** Windows chiede il permesso del firewall per Python: spunta **Reti private** e consenti. *Senza questo il telefono non vede il PC.*
 - ☐ **A3** Clic su **Create a demo capture**. Dopo circa un minuto compare "Synthetic box + cylinder" nella lista.
 - ☐ **A4** Qualità **Draft** → **Process**. Finisce in meno di un minuto; il modello ruota col mouse; le misure sono circa 85 × 63 × 83 mm (l'oggetto vero è 80 × 60 × 80: il LiDAR sbaglia di qualche mm, è normale).
-- ☐ **A5** Qualità **Medium** → se richiesto **Install OpenMVS**, poi **Process**. Finisce in 3–5 minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
-- ☐ **A6** Viste **Texture / Clay / Wire** e **Grid** funzionano; tema chiaro/scuro (icona in alto a sinistra) funziona.
-- ☐ **A7** Export **3D print** → **Export** → **Open export folder**. Apri lo STL nello slicer: dimensioni in mm corrette, base piatta appoggiata al piano, nessun errore di mesh aperta.
+- ☐ **A5** Qualità **Medium** → se richiesto **Install OpenMVS**, poi **Process**. Finisce in pochi minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
+- ☐ **A6** Viste **Texture / Clay / Wire** e **Grid** funzionano; tema chiaro/scuro (icona in alto a sinistra) funziona. Il pannello di destra ha tre schede (**Process / Result / Export**) e non scorre.
+- ☐ **A7** Scheda **Export**: **3D print**, togli la spunta a 3MF (deve restare tolta), **Export STL** → **Open Export Folder**. Apri lo STL nello slicer: dimensioni in mm corrette, base piatta appoggiata al piano, nessun errore di mesh aperta.
 - ☐ **A8** Export **Blender / render** → apri il GLB in Blender: texture visibile, oggetto dritto.
-- ☐ **A9** Calibrazione: in **Accuracy** scegli l'asse X, scrivi `100`, **Apply**. Le misure cambiano in proporzione; **Reset calibration** le riporta com'erano.
+- ☐ **A9** Calibrazione su un lato: scheda **Result**, scegli il lato X, scrivi `100`, **Apply Calibration**. Le misure cambiano in proporzione; **Reset calibration** le riporta com'erano.
+- ☐ **A10** Calibrazione su due punti: **Measure** sopra il modello, clic su due punti, compare la distanza; scrivi la lunghezza vera e **Calibrate**.
+- ☐ **A11** GPU: nella scheda **Process** premi **Enable GPU** (scarica 415 MB una volta). In basso a sinistra compare **GPU: In use** e nel risultato **Computed on: GPU**.
 
 ## B. Tappetino di scansione (una volta sola)
 
-- ☐ **B1** Scarica **Scan mat A4** dalla schermata iniziale e stampalo al **100%** ("dimensioni reali", mai "adatta alla pagina").
-- ☐ **B2** Misura col calibro la barra in basso: deve essere **100,0 mm**. Valore misurato: `______ mm`. Se non è 100,0 scrivilo in *Show advanced → Mat calibration bar* ogni volta che elabori (oppure ristampa).
-- ☐ **B3** Incolla il foglio su un supporto rigido e piatto (cartone pressato, plexiglass). Un foglio ondulato sbaglia la scala.
-- ☐ **B4** (facoltativo) Stampa anche l'A3 per oggetti fino a ~25 cm.
+Il tappetino dà la scala esatta. Non è obbligatorio: senza, la scala viene dal LiDAR (errore ~1%).
+Si scarica dal pulsante **Scan Mat** in basso a sinistra, in tre misure: **A5** (oggetti fino a ~8 cm), **A4** (fino a ~15 cm), **A3** (fino a ~25 cm).
+
+Scegli **una** delle due strade:
+
+**Strada 1 — carta incollata su un supporto rigido (consigliata)**
+- ☐ **B1** Stampa il PDF al **100%** ("dimensioni reali", mai "adatta alla pagina"), meglio su carta adesiva opaca.
+- ☐ **B2** Incollalo su qualcosa di rigido e piatto: lastra stampata in 3D da 3 mm, plexiglass, alluminio composito, vetro di una cornice. Niente bolle né pieghe.
+
+**Strada 2 — tutto stampato in 3D**
+- ☐ **B1** Scarica lo zip **3D print** (A5 entra in un piatto 220 × 220; A4 serve un piatto da 300).
+- ☐ **B2** Due colori (AMS/MMU): `base.stl` bianco + `pattern.stl` nero, caricati come un unico oggetto. Un solo estrusore: `combined.stl` in bianco e cambio filamento a nero a 2,0 mm di altezza. **Filamento opaco**: quello lucido riflette e nasconde i marker.
+
+In entrambi i casi:
+- ☐ **B3** Misura col calibro la barra di calibrazione: deve essere **100,0 mm**. Valore misurato: `______ mm`. Se non è 100,0 scrivilo nel campo **Mat bar (mm)** ogni volta che elabori.
+- ☐ **B4** Un tappetino leggermente imbarcato dà comunque la scala giusta (l'app se ne accorge, usa le distanze tra marker vicini e te lo segnala), ma piatto è più preciso.
 
 ## C. iPhone: installazione
 
-- ☐ **C1** Su GitHub la build **iOS app** è verde e produce `Calco-unsigned.ipa`.
+- ☐ **C1** Su GitHub: repository **Calco → Actions → iOS app → ultima esecuzione verde → Artifacts → `Calco-unsigned-ipa`**. Scarica lo zip ed estrai `Calco-unsigned.ipa`.
 - ☐ **C2** Installa con Sideloadly. L'app si apre sulla lista vuota "No scans yet".
 - ☐ **C3** **New scan → Object**: consenti la **fotocamera**. Si vede l'immagine dal vivo con la griglia bianca del LiDAR che copre le superfici.
 - ☐ **C4** Rotellina **Settings**: consenti la **rete locale**. Con Calco aperto sul PC e la stessa Wi-Fi, il PC compare in *Computers found*.

@@ -36,6 +36,7 @@ class Options:
     close_bottom: bool = True  # flat, closed base where the object touched the support
     print_scale: float = 1.0  # measured length of the mat's 100 mm bar / 100
     texture_size: int | None = None
+    gpu: bool = True  # use the graphics card when the CUDA engine is installed
 
     @staticmethod
     def from_dict(d: dict | None) -> "Options":
@@ -157,7 +158,8 @@ def _detect_mat(views: list[View], print_scale: float, job: Job) -> MatFit | Non
         job.progress(0.9 * (i + 1) / len(views), "Looking for the scan mat")
     fit = fit_mat(obs, [v.P for v in views], print_scale)
     if fit:
-        job.log(f"Scan mat {fit.layout}: {fit.tags_used} tags, fit {fit.rms_mm:.2f} mm RMS, scale {fit.scale:.5f}")
+        job.log(f"Scan mat {fit.layout}: {fit.tags_used} tags, fit {fit.rms_mm:.2f} mm RMS, "
+                f"scale {fit.scale:.5f} ({fit.method})")
     else:
         job.log("No scan mat found")
     return fit
@@ -254,7 +256,8 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             from .sfm import run_sfm
 
             job.start("align")
-            sfm = run_sfm(bundle, work, quality, job.log, job.progress)
+            sfm = run_sfm(bundle, work, quality, job.log, job.progress, options.gpu)
+            report["compute"] = {"features": sfm.computed_on, "dense": "cpu"}
             views = sfm.views
             report["warnings"] += sfm.warnings
             report["alignment"] = {"registered": sfm.registered, "total": sfm.total,
@@ -277,7 +280,9 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         if photo:
             from .mvs import dense_mesh
 
-            mesh = Mesh.read(dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress))
+            mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu)
+            report["compute"]["dense"] = dense_on
+            mesh = Mesh.read(mesh_path)
         else:
             from .tsdf import fuse_depth
 
@@ -289,6 +294,10 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         cut = 0.0012 if photo else 0.006  # metres above the support plane that are discarded
         if mat is not None:
             frame = ModelFrame(mat.transform, "mat", True, mat)
+            if photo and mat.rms_mm > 1.0:
+                report["warnings"].append(
+                    f"The scan mat is not flat (about {mat.rms_mm:.1f} mm out of plane). Scale was taken from "
+                    "neighbouring tags, which bending barely affects, but a rigid mat is more accurate.")
             if metric:
                 frame.lidar_vs_mat_pct = round((mat.scale - 1.0) * 100, 3)
         else:
@@ -374,8 +383,11 @@ def _scale_report(frame: ModelFrame, dims_mm: np.ndarray, views: list[View], pho
     """Where the scale comes from and an honest estimate of the dimensional error."""
     largest = float(dims_mm.max())
     if frame.scale_source == "mat":
-        mat_span = 250.0 if frame.mat.layout == "A4" else 360.0
-        scale_pct = 100.0 * frame.mat.rms_mm / mat_span + 0.05  # + printer/paper tolerance
+        if frame.mat.method == "layout":
+            mat_span = {"A5": 180.0, "A4": 250.0, "A3": 360.0}[frame.mat.layout]
+            scale_pct = 100.0 * frame.mat.rms_mm / mat_span + 0.05  # + printer/paper tolerance
+        else:
+            scale_pct = 0.2  # bent sheet: scale from neighbouring tags
     elif frame.scale_source == "lidar":
         scale_pct = 1.0
     else:
@@ -384,14 +396,14 @@ def _scale_report(frame: ModelFrame, dims_mm: np.ndarray, views: list[View], pho
         v = views[0]
         d = float(np.median([np.linalg.norm(x.center) for x in views])) if frame.scale_source == "none" else \
             float(np.median([np.linalg.norm(x.center - focus_point(views)) for x in views]))
-        px = d * frame_scale(frame) / v.K[0, 0] * (2 ** quality.mvs_resolution_level) * 1000.0
+        px = d * frame_scale(frame) / v.K[0, 0] * max(1.0, max(v.width, v.height) / quality.dense_size) * 1000.0
         noise_mm = px  # about one dense-matching pixel
     else:
         noise_mm = 5.0
     return {
         "source": frame.scale_source,
         "mat": frame.mat and {"layout": frame.mat.layout, "tags": frame.mat.tags_used,
-                              "fit_rms_mm": round(frame.mat.rms_mm, 3)},
+                              "fit_rms_mm": round(frame.mat.rms_mm, 3), "method": frame.mat.method},
         "lidar_vs_mat_pct": frame.lidar_vs_mat_pct,
         "scale_error_pct": scale_pct and round(scale_pct, 3),
         "surface_noise_mm": round(noise_mm, 2),

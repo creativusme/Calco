@@ -5,16 +5,37 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 export type ViewMode = "textured" | "clay" | "wire";
 
-interface Props { url: string; mode: ViewMode; grid: boolean; theme: string }
+interface Props {
+  url: string;
+  mode: ViewMode;
+  grid: boolean;
+  theme: string;
+  /** When true, clicks on the model pick two points; the distance (model units, metres) is reported. */
+  measuring: boolean;
+  onMeasure: (metres: number | null) => void;
+}
 
-/** three.js viewport: orbit, textured / clay / wireframe, ground grid in real units. */
-export function Viewer({ url, mode, grid, theme }: Props) {
+interface Scene {
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  controls: OrbitControls;
+  model: THREE.Object3D | null;
+  grid: THREE.GridHelper | null;
+  originals: Map<THREE.Mesh, THREE.Material>;
+  marks: THREE.Group;
+  points: THREE.Vector3[];
+  render: () => void;
+}
+
+/** three.js viewport: orbit, textured / clay / wireframe, ground grid in real units, two-point measure. */
+export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) {
   const host = useRef<HTMLDivElement>(null);
-  const state = useRef<{
-    renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera;
-    controls: OrbitControls; model: THREE.Object3D | null; grid: THREE.GridHelper | null;
-    originals: Map<THREE.Mesh, THREE.Material | THREE.Material[]>; render: () => void;
-  } | null>(null);
+  const state = useRef<Scene | null>(null);
+  const measuringRef = useRef(measuring);
+  const onMeasureRef = useRef(onMeasure);
+  measuringRef.current = measuring;
+  onMeasureRef.current = onMeasure;
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
   // one-time scene setup
@@ -26,29 +47,57 @@ export function Viewer({ url, mode, grid, theme }: Props) {
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 100);
-    camera.position.set(0.3, 0.25, 0.3);
     scene.add(new THREE.HemisphereLight(0xffffff, 0x5a5a66, 1.6));
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(1, 2, 1.5);
     scene.add(key);
+    const marks = new THREE.Group();
+    scene.add(marks);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.12;
 
     let frame = 0;
-    const render = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(tick); };
-    const tick = () => { if (controls.update()) frame = requestAnimationFrame(tick); renderer.render(scene, camera); };
+    const tick = () => {
+      if (controls.update()) frame = requestAnimationFrame(tick);
+      renderer.render(scene, camera);
+    };
+    const render = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    };
     controls.addEventListener("change", render);
     const resize = () => {
-      const { clientWidth: w, clientHeight: h } = el;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / Math.max(h, 1);
+      renderer.setSize(el.clientWidth, el.clientHeight, false);
+      camera.aspect = el.clientWidth / Math.max(el.clientHeight, 1);
       camera.updateProjectionMatrix();
       render();
     };
     const ro = new ResizeObserver(resize);
     ro.observe(el);
-    state.current = { renderer, scene, camera, controls, model: null, grid: null, originals: new Map(), render };
+    const s: Scene = { renderer, scene, camera, controls, model: null, grid: null, originals: new Map(), marks, points: [], render };
+    state.current = s;
+
+    // a click that did not drag picks a point while measuring
+    let down: { x: number; y: number } | null = null;
+    const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+    const onUp = (e: PointerEvent) => {
+      if (!down || !measuringRef.current || !s.model) return;
+      if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObject(s.model, true)[0];
+      if (!hit) return;
+      if (s.points.length === 2) s.points = [];
+      s.points.push(hit.point.clone());
+      drawMarks(s);
+      onMeasureRef.current(s.points.length === 2 ? s.points[0].distanceTo(s.points[1]) : null);
+    };
+    renderer.domElement.addEventListener("pointerdown", onDown);
+    renderer.domElement.addEventListener("pointerup", onUp);
+
     resize();
     return () => {
       ro.disconnect();
@@ -69,6 +118,8 @@ export function Viewer({ url, mode, grid, theme }: Props) {
       if (cancelled || !state.current) return;
       if (s.model) s.scene.remove(s.model);
       s.originals.clear();
+      s.points = [];
+      drawMarks(s);
       s.model = gltf.scene;
       s.model.traverse((o) => {
         const m = o as THREE.Mesh;
@@ -82,12 +133,11 @@ export function Viewer({ url, mode, grid, theme }: Props) {
       });
       s.scene.add(s.model);
       const box = new THREE.Box3().setFromObject(s.model);
-      const size = box.getSize(new THREE.Vector3());
       const centre = box.getCenter(new THREE.Vector3());
-      const r = Math.max(size.length() / 2, 1e-4);
-      s.controls.target.copy(centre);
+      const r = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1e-4);
       const vfov = THREE.MathUtils.degToRad(s.camera.fov);
       const fov = Math.min(vfov, 2 * Math.atan(Math.tan(vfov / 2) * s.camera.aspect)); // narrowest side
+      s.controls.target.copy(centre);
       s.camera.position.copy(centre).add(new THREE.Vector3(1, 0.7, 1).normalize().multiplyScalar((r / Math.sin(fov / 2)) * 1.15));
       s.camera.near = r / 100;
       s.camera.far = r * 100;
@@ -103,25 +153,51 @@ export function Viewer({ url, mode, grid, theme }: Props) {
     const s = state.current;
     if (!s || status !== "ready" || !s.model) return;
     const dark = theme === "dark";
-    const clay = new THREE.MeshStandardMaterial({ color: dark ? 0xb9b4ab : 0xa9a49b, roughness: 0.85, metalness: 0 });
-    const wire = new THREE.MeshBasicMaterial({ color: dark ? 0xe8a15a : 0xb5651d, wireframe: true });
+    const clay = new THREE.MeshStandardMaterial({ color: dark ? 0xb4b7bb : 0xa3a6aa, roughness: 0.85, metalness: 0 });
+    const wire = new THREE.MeshBasicMaterial({ color: dark ? 0xd2f24a : 0x3d4a00, wireframe: true });
     s.originals.forEach((orig, mesh) => { mesh.material = mode === "textured" ? orig : mode === "clay" ? clay : wire; });
     if (s.grid) { s.scene.remove(s.grid); s.grid.dispose(); s.grid = null; }
     if (grid) {
       const r = s.model.userData.radius as number;
       const cell = 10 ** Math.floor(Math.log10(r)); // 1 cm cells for a ~10 cm object, 10 cm for ~1 m
-      const cells = 20;
-      s.grid = new THREE.GridHelper(cell * cells, cells, dark ? 0x4a4f57 : 0xb0b4ba, dark ? 0x2a2d32 : 0xd9dbdf);
+      s.grid = new THREE.GridHelper(cell * 20, 20, dark ? 0x4b5058 : 0xa9adb3, dark ? 0x25282d : 0xdcdee1);
       s.scene.add(s.grid);
     }
     s.render();
     return () => { clay.dispose(); wire.dispose(); };
   }, [mode, grid, theme, status]);
 
+  // leaving measure mode clears the picked points
+  useEffect(() => {
+    const s = state.current;
+    if (!s || measuring) return;
+    s.points = [];
+    drawMarks(s);
+  }, [measuring]);
+
   return (
-    <div className="viewer" ref={host}>
-      {status === "loading" && <div className="viewer-note">Loading model…</div>}
-      {status === "error" && <div className="viewer-note">Could not load the model.</div>}
+    <div className={`viewer ${measuring ? "is-measuring" : ""}`} ref={host}>
+      {status === "loading" && <div className="viewer-note" aria-live="polite">Loading model…</div>}
+      {status === "error" && <div className="viewer-note" aria-live="polite">Could not load the model. Process the capture again.</div>}
     </div>
   );
+}
+
+/** Draw the picked points and the line between them, always on top of the model. */
+function drawMarks(s: Scene) {
+  s.marks.clear();
+  const r = ((s.model?.userData.radius as number) ?? 0.1) * 0.012;
+  const material = new THREE.MeshBasicMaterial({ color: 0xd2f24a, depthTest: false });
+  for (const p of s.points) {
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), material);
+    dot.position.copy(p);
+    dot.renderOrder = 10;
+    s.marks.add(dot);
+  }
+  if (s.points.length === 2) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(s.points), new THREE.LineBasicMaterial({ color: 0xd2f24a, depthTest: false }));
+    line.renderOrder = 10;
+    s.marks.add(line);
+  }
+  s.render();
 }

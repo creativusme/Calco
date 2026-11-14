@@ -14,6 +14,7 @@ export interface Report {
   seconds: number;
   alignment?: { registered: number; total: number; reprojection_px: number; phone_pose_rms_mm: number | null };
   model: { vertices: number; faces: number; dimensions_mm: [number, number, number]; watertight: boolean };
+  compute?: { features: "gpu" | "cpu"; dense: "gpu" | "cpu" };
   scale: {
     source: "mat" | "lidar" | "none";
     mat: { layout: string; tags: number; fit_rms_mm: number } | null;
@@ -65,7 +66,7 @@ export interface Info {
   port: number;
   addresses: string[];
   hostname: string;
-  tools: { openmvs: boolean; gpu: string | null; installing: boolean };
+  tools: { openmvs: boolean; colmap_cuda: boolean; gpu: string | null; installing: boolean };
   presets: { quality: Quality[]; profiles: Profile[]; formats: string[]; units: string[] };
   demo_running: boolean;
 }
@@ -101,6 +102,7 @@ export const api = {
   exportUrl: (id: string, file: string) => `${BASE}/api/jobs/${id}/exports/${encodeURIComponent(file)}`,
   reveal: (id: string) => post(`/api/jobs/${id}/reveal`),
   matUrl: (size: string) => `${BASE}/api/mat.pdf?size=${size}`,
+  mat3dUrl: (size: string) => `${BASE}/api/mat.zip?size=${size}`,
   demo: () => post<{ started: boolean }>("/api/demo"),
-  installTools: () => post<{ started: boolean }>("/api/tools/install"),
+  installTools: (what: "openmvs" | "colmap") => post<{ started: boolean }>(`/api/tools/install?what=${what}`),
 };

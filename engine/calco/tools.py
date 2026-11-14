@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import urllib.request
@@ -14,6 +15,13 @@ OPENMVS = {
     "version": "2.4.0",
     "url": "https://github.com/cdcseacave/openMVS/releases/download/v2.4.0/OpenMVS_Windows_x64.zip",
     "sha256": "0c31660c15c9ebc4c106873cf67564d9570d404aef7a6403451da1b6178b2167",
+}
+
+# COLMAP's CUDA build bundles the CUDA runtime, so only an NVIDIA driver is needed.
+COLMAP = {
+    "version": "4.2.1",  # must match the pycolmap version: both read and write the same database
+    "url": "https://github.com/colmap/colmap/releases/download/4.2.1/colmap-x64-windows-cuda.zip",
+    "sha256": "e9c5cbd84c2ea986d2e970a2473fc2d2e6b34a2cdcf5d3df2765c319a63af881",
 }
 
 
@@ -61,16 +69,66 @@ def install_openmvs(log=print) -> Path:
     return root
 
 
-def run_tool(exe: Path, args: list[str], cwd: Path, log=print) -> None:
-    """Run an external tool, streaming its output to the log. Raises on failure."""
+def colmap_bin() -> Path | None:
+    """Path to the CUDA build of COLMAP, or None if it is not installed."""
+    root = tools_dir() / "colmap"
+    if root.exists():
+        for p in root.rglob("colmap.exe"):
+            return p
+    return None
+
+
+def have_gpu() -> bool:
+    try:
+        return subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def install_colmap(log=print) -> Path:
+    root = tools_dir() / "colmap"
+    if colmap_bin():
+        log(f"COLMAP (CUDA) already installed in {root}")
+        return root
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / "colmap.zip"
+    log(f"Downloading COLMAP {COLMAP['version']} CUDA build (about 415 MB) from {COLMAP['url']}")
+    urllib.request.urlretrieve(COLMAP["url"], archive)
+    h = hashlib.sha256()
+    with archive.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    if COLMAP["sha256"] and h.hexdigest() != COLMAP["sha256"]:
+        archive.unlink()
+        raise RuntimeError(f"COLMAP download hash mismatch: {h.hexdigest()}")
+    log(f"sha256 {h.hexdigest()}")
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(root)
+    archive.unlink()
+    if not colmap_bin():
+        raise RuntimeError(f"colmap.exe not found after extracting to {root}")
+    return root
+
+
+_GLOG = re.compile(r"^[IWEF]\d{8} [\d:.]+\s+\d+ \S+\] ")  # COLMAP log prefix
+_NOISE = ("Sweep ", "Initialization:", "Iteration ", "Total: ")
+
+
+def run_tool(exe: Path, args: list[str], cwd: Path, log=print, on_line=None) -> None:
+    """Run an external tool, streaming its output to the log. Raises on failure.
+
+    on_line(line) is called for every output line, e.g. to turn it into progress.
+    """
     cmd = [str(exe), *[str(a) for a in args]]
     log("$ " + " ".join(cmd))
     proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                             errors="replace")
     tail = []
     for line in proc.stdout:
-        line = line.rstrip()
-        if line:
+        line = _GLOG.sub("", line.rstrip())
+        if on_line and line:
+            on_line(line)
+        if line and not line.lstrip().startswith(_NOISE):
             tail.append(line)
             tail = tail[-30:]
             log("  " + line)
@@ -90,7 +148,8 @@ def run_tool(exe: Path, args: list[str], cwd: Path, log=print) -> None:
 
 
 def status() -> dict:
-    info = {"openmvs": have_openmvs(), "tools_dir": str(tools_dir()), "gpu": None}
+    info = {"openmvs": have_openmvs(), "colmap_cuda": colmap_bin() is not None, "tools_dir": str(tools_dir()),
+            "gpu": None}
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
                              capture_output=True, text=True, timeout=10).stdout.strip()

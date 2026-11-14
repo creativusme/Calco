@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pycolmap
 
+from . import tools
 from .bundle import Bundle
 from .presets import Quality
 from .views import View
@@ -25,6 +26,7 @@ class SfmResult:
     pose_rms_mm: float | None  # agreement between refined camera centres and the phone's
     aligned: bool  # True when the model is in the metric ARKit frame
     sparse_ply: Path | None = None
+    computed_on: str = "cpu"
     warnings: list[str] = field(default_factory=list)
 
 
@@ -52,7 +54,8 @@ def _pose_pairs(bundle: Bundle, neighbours: int = 16) -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
-def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=lambda f, m="": None) -> SfmResult:
+def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=lambda f, m="": None,
+            use_gpu: bool = True) -> SfmResult:
     sfm_dir = work / "sfm"
     if sfm_dir.exists():
         shutil.rmtree(sfm_dir)
@@ -62,43 +65,76 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     names = [f.image.name for f in bundle.frames]
     warnings: list[str] = []
 
-    # --- features
-    reader = pycolmap.ImageReaderOptions()
-    sizes = {(f.width, f.height) for f in bundle.frames}
-    if len(sizes) == 1:
-        f0 = bundle.frames[0]
-        fx = float(np.median([f.intrinsics[0] for f in bundle.frames]))
-        fy = float(np.median([f.intrinsics[1] for f in bundle.frames]))
-        cx, cy = f0.intrinsics[2], f0.intrinsics[3]
-        if fx > 0:
-            reader.camera_model = "SIMPLE_RADIAL"
-            reader.camera_params = f"{(fx + fy) / 2},{cx},{cy},0"
-        mode = pycolmap.CameraMode.SINGLE
-    else:
-        mode = pycolmap.CameraMode.AUTO
-    extraction = pycolmap.FeatureExtractionOptions()
-    extraction.max_image_size = quality.sfm_image_size
-    extraction.sift.max_num_features = quality.sfm_features
-    progress(0.02, "Extracting features")
-    pycolmap.extract_features(db, image_dir, image_names=names, camera_mode=mode,
-                              reader_options=reader, extraction_options=extraction)
-
-    # --- matching
-    progress(0.35, "Matching features")
+    single = len({(f.width, f.height) for f in bundle.frames}) == 1
+    fx = float(np.median([f.intrinsics[0] for f in bundle.frames]))
+    fy = float(np.median([f.intrinsics[1] for f in bundle.frames]))
+    cx, cy = bundle.frames[0].intrinsics[2:]
+    known = single and fx > 0
+    pairs_file = None
     if bundle.has_poses:
         pairs_file = sfm_dir / "pairs.txt"
         pairs = _pose_pairs(bundle)
         pairs_file.write_text("\n".join(f"{a} {b}" for a, b in pairs), encoding="utf-8")
         log(f"Matching {len(pairs)} pose-selected pairs (exhaustive would be {len(names) * (len(names) - 1) // 2})")
-        pairing = pycolmap.ImportedPairingOptions()
-        pairing.match_list_path = str(pairs_file)
-        pycolmap.match_image_pairs(db, pairing_options=pairing)
-    elif len(names) <= 150:
-        pycolmap.match_exhaustive(db)
-    else:
-        pairing = pycolmap.SequentialPairingOptions()
-        pairing.overlap = 20
-        pycolmap.match_sequential(db, pairing_options=pairing)
+
+    def on_gpu() -> None:
+        """Features and matching with the CUDA build of COLMAP (same database format as pycolmap)."""
+        exe = tools.colmap_bin()
+        (sfm_dir / "images.txt").write_text("\n".join(names), encoding="utf-8")
+        args = ["feature_extractor", "--database_path", db, "--image_path", image_dir,
+                "--image_list_path", sfm_dir / "images.txt", "--ImageReader.single_camera", int(single),
+                "--FeatureExtraction.use_gpu", 1, "--FeatureExtraction.max_image_size", quality.sfm_image_size,
+                "--SiftExtraction.max_num_features", quality.sfm_features]
+        if known:
+            args += ["--ImageReader.camera_model", "SIMPLE_RADIAL",
+                     "--ImageReader.camera_params", f"{(fx + fy) / 2},{cx},{cy},0"]
+        progress(0.02, "Extracting features (GPU)")
+        tools.run_tool(exe, args, sfm_dir, log)
+        progress(0.3, "Matching features (GPU)")
+        if pairs_file:
+            tools.run_tool(exe, ["matches_importer", "--database_path", db, "--match_list_path", pairs_file,
+                                 "--match_type", "pairs", "--FeatureMatching.use_gpu", 1], sfm_dir, log)
+        elif len(names) <= 250:
+            tools.run_tool(exe, ["exhaustive_matcher", "--database_path", db, "--FeatureMatching.use_gpu", 1],
+                           sfm_dir, log)
+        else:
+            tools.run_tool(exe, ["sequential_matcher", "--database_path", db, "--FeatureMatching.use_gpu", 1,
+                                 "--SequentialMatching.overlap", 20], sfm_dir, log)
+
+    def on_cpu() -> None:
+        reader = pycolmap.ImageReaderOptions()
+        if known:
+            reader.camera_model = "SIMPLE_RADIAL"
+            reader.camera_params = f"{(fx + fy) / 2},{cx},{cy},0"
+        extraction = pycolmap.FeatureExtractionOptions()
+        extraction.max_image_size = quality.sfm_image_size
+        extraction.sift.max_num_features = quality.sfm_features
+        progress(0.02, "Extracting features")
+        pycolmap.extract_features(db, image_dir, image_names=names,
+                                  camera_mode=pycolmap.CameraMode.SINGLE if single else pycolmap.CameraMode.AUTO,
+                                  reader_options=reader, extraction_options=extraction)
+        progress(0.35, "Matching features")
+        if pairs_file:
+            pairing = pycolmap.ImportedPairingOptions()
+            pairing.match_list_path = str(pairs_file)
+            pycolmap.match_image_pairs(db, pairing_options=pairing)
+        elif len(names) <= 150:
+            pycolmap.match_exhaustive(db)
+        else:
+            pairing = pycolmap.SequentialPairingOptions()
+            pairing.overlap = 20
+            pycolmap.match_sequential(db, pairing_options=pairing)
+
+    computed_on = "cpu"
+    if use_gpu and tools.colmap_bin() and tools.have_gpu():
+        try:
+            on_gpu()
+            computed_on = "gpu"
+        except RuntimeError as e:
+            log(f"GPU feature matching failed, using the CPU instead: {e}")
+            db.unlink(missing_ok=True)
+    if computed_on == "cpu":
+        on_cpu()
 
     # --- mapping
     progress(0.6, "Solving cameras")
@@ -146,7 +182,7 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
     if dense_dir.exists():
         shutil.rmtree(dense_dir)
     und = pycolmap.UndistortCameraOptions()
-    und.max_image_size = quality.mvs_max_resolution
+    und.max_image_size = quality.photo_size
     pycolmap.undistort_images(dense_dir, model_dir, image_dir, output_type="COLMAP", undistort_options=und)
 
     urec = pycolmap.Reconstruction(dense_dir / "sparse")
@@ -161,4 +197,4 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
                           cam.width, cam.height))
     progress(1.0, "Cameras solved")
     return SfmResult(views, dense_dir, registered, len(names), float(rec.compute_mean_reprojection_error()),
-                     pose_rms, aligned, sparse_ply, warnings)
+                     pose_rms, aligned, sparse_ply, computed_on, warnings)
