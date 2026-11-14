@@ -107,7 +107,15 @@ class Job:
         self._last_write = now
         tmp = self.dir / "status.json.tmp"
         tmp.write_text(json.dumps(self.status), encoding="utf-8")
-        tmp.replace(self.dir / "status.json")
+        # Windows refuses to replace a file another process is reading at that instant (the UI
+        # polls it): retry briefly, and never let a status update stop the reconstruction
+        for attempt in range(20):
+            try:
+                tmp.replace(self.dir / "status.json")
+                return
+            except PermissionError:
+                time.sleep(0.05 * (attempt + 1))
+        self._last_write = 0.0  # try again on the next update
 
     def _entry(self, name):
         return next(s for s in self.status["stages"] if s["name"] == name)
@@ -154,11 +162,24 @@ class ModelFrame:
 
 
 def _detect_mat(views: list[View], print_scale: float, job: Job) -> MatFit | None:
-    obs = []
-    for i, v in enumerate(views):
-        gray = cv2.imread(str(v.image), cv2.IMREAD_GRAYSCALE)
-        obs.append(detect_tags(gray) if gray is not None else {})
-        job.progress(0.9 * (i + 1) / len(views), "Looking for the scan mat")
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .select import spread_subset
+
+    # 40 photos spread over the capture are plenty, and half resolution keeps sub-pixel corners
+    by_name = {v.name: v for v in views}
+    views = [by_name[n] for n in spread_subset([v.name for v in views], 40)]
+
+    def tags(v: View) -> dict:
+        gray = cv2.imread(str(v.image), cv2.IMREAD_REDUCED_GRAYSCALE_2 if max(v.width, v.height) > 2400 else cv2.IMREAD_GRAYSCALE)
+        if gray is None:
+            return {}
+        k = v.width / gray.shape[1]
+        return {tid: (c + 0.5) * k - 0.5 for tid, c in detect_tags(gray).items()}
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        obs = list(pool.map(tags, views))
+    job.progress(0.9, "Looking for the scan mat")
     fit = fit_mat(obs, [v.P for v in views], print_scale)
     if fit:
         job.log(f"Scan mat {fit.layout}: {fit.tags_used} tags, fit {fit.rms_mm:.2f} mm RMS, "
@@ -212,8 +233,9 @@ def _isolate(mesh: Mesh, frame: ModelFrame, crop_box, views: list[View], cut: fl
         if len(mesh.f) == 0:
             raise RuntimeError("The whole mesh lies on the support plane.")
     if frame.has_plane:
-        mesh = meshops.drop_flat_pieces(mesh, transform_points(frame.M, mesh.v)[:, 2], min_height=4 * cut)
-    mesh = meshops.keep_largest(mesh, min_ratio=0.05)
+        # a piece must rise 1.5 mm above the cut: table crumbs do not, thin parts (washers, pliers) do
+        mesh = meshops.drop_flat_pieces(mesh, transform_points(frame.M, mesh.v)[:, 2], min_height=cut + 0.0015)
+    mesh = meshops.keep_largest(mesh, min_ratio=0.02)
 
     # 3. flat closed base: snap the open rim down to the plane, then cap it
     if frame.has_plane and close_bottom:
@@ -227,6 +249,27 @@ def _isolate(mesh: Mesh, frame: ModelFrame, crop_box, views: list[View], cut: fl
         except Exception as e:  # hole filling is best effort
             job.log(f"Hole filling skipped: {e}")
     return meshops.tidy(mesh)
+
+
+def _settle_on_ground(mesh: Mesh, frame: ModelFrame, cut: float, job: Job) -> float:
+    """Put z = 0 exactly on the reconstructed support surface and size the cut to its noise.
+
+    The fitted plane can sit a millimetre or two off the real surface (reflections on glossy
+    tablecloths put points below it, paper is not perfectly flat). The surface is the densest
+    layer of points near the plane: move z = 0 to that peak, then cut 3 sigma above it.
+    """
+    z = transform_points(frame.M, mesh.v)[:, 2]
+    near = z[np.abs(z) < 0.006]
+    if len(near) < 2000:
+        return cut
+    hist, edges = np.histogram(near, bins=np.arange(-0.006, 0.00601, 0.0002))
+    peak = float(edges[np.argmax(hist)] + 0.0001)
+    layer = near[np.abs(near - peak) < 0.002]
+    sigma = float(np.median(np.abs(layer - np.median(layer))) * 1.4826)
+    frame.M[2, 3] -= peak
+    new_cut = float(np.clip(3.0 * sigma + 0.0004, cut, 0.004))
+    job.log(f"Support surface: moved {peak * 1000:+.2f} mm, noise {sigma * 1000:.2f} mm, cutting {new_cut * 1000:.2f} mm above it")
+    return new_cut
 
 
 def frame_scale(frame: ModelFrame) -> float:
@@ -336,6 +379,9 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
                 report["warnings"].append("No scale reference (no LiDAR poses, no scan mat): the model is not to "
                                           "scale. Use Calibrate with a known measurement.")
 
+        if frame.has_plane and frame.scale_source != "none":
+            cut = _settle_on_ground(mesh, frame, cut, job)
+
         # ---- isolate object
         if p["isolate"]:
             job.start("cleanup")
@@ -368,7 +414,11 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             job.start("texture")
             from .texture import bake_texture
 
-            tm = bake_texture(mesh, views, min(tex_size, 4096), job.progress)
+            from .select import spread_subset
+
+            by_name = {v.name: v for v in views}  # 40 well-spread photos colour a LiDAR mesh fine
+            tex_views = [by_name[n] for n in spread_subset(list(by_name), 40)]
+            tm = bake_texture(mesh, tex_views, min(tex_size, 4096), job.progress)
             job.done()
 
         # ---- finalize: move into the model frame, centred on the object

@@ -12,7 +12,8 @@ Open-source 3D scanning system: iPhone capture app (LiDAR + ARKit poses + photos
 | `docs/` | Capture format spec, field test checklist, roadmap | Markdown |
 
 The phone never talks to the UI. Two transfer paths, both into the engine's library:
-- **Wi-Fi push**: the phone uploads to the **engine server** (`calco serve`, port 7878, Bonjour `_calco._tcp`) and pings `/api/hello` every 3 s with `X-Calco-Device`.
+- **Pairing** (`engine/calco/pairing.py`, `ios/Calco/Pairing.swift`): no discovery. The computer shows a network code (its IPv4 in Crockford base 32, `XXXX-XXX`) and a 6-digit password; every non-local request needs `X-Calco-Pin`, and the phone checks the same password before serving the cable link.
+- **Wi-Fi push**: the phone uploads to the **engine server** (`calco serve`, port 7878) and pings `/api/hello` every 3 s with `X-Calco-Device` and `X-Calco-Pin`.
 - **Cable pull**: the phone serves its captures on port 7879 (`ios/Calco/PhoneServer.swift`); the engine reaches it through Apple's usbmuxd on 127.0.0.1:27015 (`engine/calco/usb.py`). Needs Apple Devices/iTunes on Windows, no firewall rule. Captures marked `sent` on the phone are never pulled again.
 
 The desktop UI is a client of the same HTTP API, so it also runs in a plain browser (`npm run dev`).
@@ -21,7 +22,7 @@ The desktop UI is a client of the same HTTP API, so it also runs in a plain brow
 
 - Name **Calco**. License **AGPL-3.0** + CLA for future dual licensing. Dependencies may be GPL/AGPL (OpenMVS).
 - The **capture bundle** (`docs/capture-format.md`) is the contract between phone and engine. Change the spec first, bump `version`, keep the engine reading old versions.
-- ARKit poses are *priors*: they make SfM fast and give metric scale; photogrammetry gives the detail. LiDAR alone is only ±1 cm.
+- Cameras come from the ARKit poses: triangulate with them, then bundle-adjust (`_known_pose_model` in `sfm.py`). Incremental mapping is only the fallback (no poses, or it fails) because it builds wrong forks on repetitive textures (seen on a real capture: 16 photos 30 cm off). Photos without a pose (macro details) are registered afterwards against the fixed model. LiDAR alone is only ±1 cm.
 - Precision matters (3D-printed parts must fit): scale comes from the **scan mat** (AprilTag 36h11) or a manual caliper measurement, and every result carries an accuracy report.
 - "Automatic first": the engine picks the pipeline from the bundle (`plan()` in `engine/calco/pipeline.py`); every choice stays overridable.
 - No Mac: iOS builds run in GitHub Actions (`.github/workflows/ios.yml`) and produce an **unsigned IPA** the owner signs with Sideloadly. Swift code cannot be compiled locally, so keep it simple and check CI.

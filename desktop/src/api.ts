@@ -15,6 +15,7 @@ export interface Report {
   alignment?: { registered: number; total: number; reprojection_px: number; phone_pose_rms_mm: number | null };
   model: { vertices: number; faces: number; dimensions_mm: [number, number, number]; watertight: boolean };
   compute?: { features: "gpu" | "cpu"; dense: "gpu" | "cpu" };
+  photos?: { dropped_blurry: number[]; used: number };
   scale: {
     source: "mat" | "lidar" | "none";
     mat: { layout: string; tags: number; fit_rms_mm: number } | null;

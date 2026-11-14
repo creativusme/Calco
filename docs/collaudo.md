@@ -9,7 +9,7 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 ## A. Computer (una volta sola, ~15 min)
 
 - ☐ **A1** Doppio clic su `Start Calco.cmd`. Si apre il browser su `http://localhost:7878` e in basso a sinistra compare **Engine ready** con la scheda video (RTX 3060).
-- ☐ **A2** In basso a sinistra c'è il riquadro del telefono. Se compare in rosso **Wi-Fi transfer blocked by Windows**, apri **How to fix** e segui i passi (PowerShell come amministratore, `tools\allow-wifi.ps1`), poi **I Ran It · Check Again**: la scritta rossa sparisce. *Serve solo per il Wi-Fi: il cavo funziona sempre.*
+- ☐ **A2** In basso a sinistra c'è il riquadro del telefono con **Network code** e **Password** per l'abbinamento. Se compare in rosso **Wi-Fi transfer blocked by Windows**, apri **How to fix** e segui i passi (PowerShell come amministratore, `tools\allow-wifi.ps1`), poi **I Ran It · Check Again**: la scritta rossa sparisce. *Serve solo per il Wi-Fi: il cavo funziona sempre.*
 - ☐ **A3** Clic su **Create a demo capture**. Dopo circa un minuto compare "Synthetic box + cylinder" nella lista.
 - ☐ **A4** Qualità **Draft** → **Process**. Finisce in meno di un minuto; il modello ruota col mouse; le misure sono circa 85 × 63 × 83 mm (l'oggetto vero è 80 × 60 × 80: il LiDAR sbaglia di qualche mm, è normale).
 - ☐ **A5** Qualità **Medium** → se richiesto **Install OpenMVS**, poi **Process**. Finisce in pochi minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
@@ -46,8 +46,9 @@ In entrambi i casi:
 - ☐ **C2** Installa con Sideloadly. L'app si apre sulla lista vuota "No scans yet".
 - ☐ **C3** **New scan → Object**: consenti la **fotocamera**. Si vede l'immagine dal vivo con la griglia bianca del LiDAR che copre le superfici.
 - ☐ **C4** L'icona dell'app è il quadrato lime su fondo scuro. Alla prima apertura consenti la **rete locale**.
-- ☐ **C5** In alto c'è sempre la barra di connessione: verde = collegato (dice se via **cavo** o **Wi-Fi** e il nome del PC), arancione = PC trovato ma non risponde (con il motivo), grigio = nessun PC. Toccala per le impostazioni.
-- ☐ **C6** Se il Wi-Fi non trova il PC da solo: Impostazioni → scrivi l'indirizzo mostrato in basso a sinistra sul PC (es. `192.168.1.20:7878`) → **Test connection**.
+- ☐ **C5** **Abbinamento** (una volta sola): sul PC, in basso a sinistra, ci sono **Network code** (es. `30AG-0EK`) e **Password** (6 cifre). Sul telefono si apre da solo *Settings → Connect*: scrivili e premi **Connect** → *Connected to …*. Serve sia per il Wi-Fi sia per il cavo: nessun altro PC può ricevere le tue scansioni.
+- ☐ **C5b** In alto c'è sempre la barra di connessione: verde = collegato (dice se via **cavo** o **Wi-Fi** e il nome del PC), arancione = abbinato ma il PC non risponde (con il motivo), grigio = non abbinato. Toccala per le impostazioni.
+- ☐ **C5c** Password sbagliata → messaggio *Wrong password*. **New** sul PC genera una password nuova: il telefono va riabbinato.
 
 ## D. Prima scansione di prova (in casa, oggetto facile)
 
@@ -57,6 +58,8 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **D2** Inquadra l'oggetto, **Place box**: compare un cubo con spigoli spessi lime, sempre visibile anche dietro l'oggetto. Regola la dimensione col cursore finché lo contiene tutto con un po' di margine; **Move box** lo risposta dove stai puntando.
 - ☐ **D2b** Le superfici già viste dal LiDAR si colorano di un velo lime trasparente: è l'anteprima di cosa è stato scansionato.
 - ☐ **D3** Tocca il pulsante rosso: parte lo scatto automatico. A ogni foto senti una **vibrazione** leggera e il bordo dello schermo lampeggia lime. Il contatore sale mentre ti muovi; **non** scatta se stai fermo.
+- ☐ **D3b** Scatta solo quando tieni il telefono quasi fermo (meno di ~5 cm/s e ~12°/s): così le foto non vengono mosse. Se vai veloce compare *Slow down*. Il ritmo giusto è: sposta, fermati un attimo, sposta.
+- ☐ **D3c** **Dettagli**: il pulsante con il fiore (macro) a sinistra mette in pausa il LiDAR e apre la fotocamera ravvicinata. Avvicinati a 3–15 cm da un foro, una filettatura, una scritta: in alto compare **Macro lens** quando il telefono passa da solo alla lente macro. Scatta da sola quando giri di qualche grado e stai fermo (o col pulsante bianco). **Done** torna alla scansione LiDAR.
 - ☐ **D4** Muoviti troppo in fretta: compare **Slow down** e smette di scattare. Rallenta: riprende.
 - ☐ **D5** Fai un giro completo ad altezza oggetto, poi un secondo giro dall'alto (~45°). L'anello di copertura in alto si riempie di verde (anello interno = giro basso, esterno = giro alto).
 - ☐ **D6** Puntini bianchi restano sospesi nei punti da cui hai scattato.
@@ -76,7 +79,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **E6** Se c'è un errore, sotto la scansione compare il motivo in rosso (es. il PC non risponde → firewall).
 
 **Pulizia del telefono**
-- ☐ **E7** Menu **⋯** in alto a destra → **Delete sent scans**: chiede conferma e cancella solo quelle già sul PC.
+- ☐ **E7** In alto a destra c'è solo la rotellina **Impostazioni**.
 - ☐ **E8** **Select** in alto a sinistra → spunta alcune scansioni → **Delete (n)**. Se tra queste ce n'è una non ancora inviata, l'avviso lo dice. Funziona anche lo swipe verso sinistra su una riga.
 
 ## F. Elaborazione e precisione (il test che conta)
@@ -99,7 +102,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 | Caso | Come | Esito / note |
 |---|---|---|
-| ☐ Oggetto piccolo (2–5 cm) | Tappetino, avvicinati il più possibile restando a fuoco (~15 cm), 60+ foto | |
+| ☐ Oggetto piccolo (2–5 cm) | **New scan → Macro**, pezzo sul tappetino **A5**, giri attorno a 5–10 cm: deve comparire *Macro lens*. 40–80 foto. Elabora **Medium**: la scala viene dal tappetino | |
 | ☐ Oggetto ~1 m (es. il tappo) | Senza tappetino o con più fogli attorno; box grande; 100–150 foto | |
 | ☐ Superficie lucida o nera | Prima senza niente, poi con spray opacizzante o pallini adesivi | |
 | ☐ Superficie liscia e uniforme | Pallini adesivi sparsi a caso | |
@@ -132,4 +135,9 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 ## Cosa non c'è ancora (non cercarlo durante il collaudo)
 
-Anteprima 3D sul telefono · modalità Macro per pezzi sotto i 3 cm · unione di due scansioni (sopra/sotto) · maschere AI per lo scontorno · Gaussian Splatting · import di foto/video esterni · export USDZ/FBX/STEP e sezioni DXF · report PDF del sopralluogo · finestra nativa Tauri (per ora l'interfaccia gira nel browser).
+Anteprima 3D sul telefono · unione di due scansioni (sopra/sotto) · maschere AI per lo scontorno · Gaussian Splatting · import di foto/video esterni · export USDZ/FBX/STEP e sezioni DXF · report PDF del sopralluogo · finestra nativa Tauri (per ora l'interfaccia gira nel browser).
+
+
+## Nota sui risultati
+
+Nella scheda **Result** sul PC: **Blurred, skipped** = foto mosse scartate da sole; **Phone vs photos** = quanto le posizioni del telefono e quelle ricalcolate dalle foto concordano (bene sotto i 5 mm). Per i pezzi da stampare togli **Colour texture** in Process: stessa geometria, qualche minuto in meno.

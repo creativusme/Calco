@@ -34,7 +34,21 @@ def _limit_views(dense_dir: Path, quality: Quality, score: dict | None, log) -> 
     names = sorted(p.name for p in (dense_dir / "images").iterdir())
     chosen = spread_subset(names, quality.dense_views, score)
     stereo = dense_dir / "stereo"
-    (stereo / "patch-match.cfg").write_text("".join(f"{n}\n__auto__, 8\n" for n in chosen), encoding="utf-8")
+    if len(chosen) == len(names):
+        sources = {n: "__auto__, 8" for n in chosen}
+    else:
+        # source photos must come from the subset too: the geometric pass needs their depth maps
+        import pycolmap
+
+        rec = pycolmap.Reconstruction(dense_dir / "sparse")
+        seen = {img.name: {p.point3D_id for p in img.points2D if p.has_point3D()} for img in rec.images.values()}
+        sources = {}
+        for n in chosen:
+            mine = seen.get(n, set())
+            shared = sorted(((len(mine & seen.get(m, set())), m) for m in chosen if m != n), reverse=True)
+            best = [m for k, m in shared[:8] if k > 0] or [m for _, m in shared[:8]]
+            sources[n] = ", ".join(best)
+    (stereo / "patch-match.cfg").write_text("".join(f"{n}\n{sources[n]}\n" for n in chosen), encoding="utf-8")
     (stereo / "fusion.cfg").write_text("".join(f"{n}\n" for n in chosen), encoding="utf-8")
     if len(chosen) < len(names):
         log(f"Depth maps for {len(chosen)} of {len(names)} photos (spread over the capture, sharpest first)")

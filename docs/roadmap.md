@@ -21,8 +21,25 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | Cable transfer (computer pulls via usbmuxd) | **Verified** by tests against a fake phone (pull, resume, no re-download of deleted scans). usbmuxd answers on the dev PC. **Never tried with the real phone** |
 | Desktop UI in the browser | **Verified** by hand: library, process, tabs, viewer, two-point measure, calibration, export |
 | Desktop Tauri shell | Written, **never compiled** (no Rust on the dev machine) |
-| iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.1 on the phone: capture works, Wi-Fi transfer failed (firewall). 0.2 (cable, connection bar, delete, haptics, box, live mesh, icon) **not run yet** |
-| Real captures from a phone | **None yet**. Everything above is from the synthetic scene |
+| iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.2 on the phone: capture works, one real capture reached the computer. 0.3 (pairing, Macro mode, Detail photos, stricter still-shutter) **not run yet** |
+| Pairing (network code + password) | **Verified** by tests (401 without/with a wrong password, code round trip). Not tried with the phone |
+| Real capture #1 (pliers + glue stick on a glossy patterned tablecloth, 198 photos, no mat) | See "First real capture" below |
+
+## First real capture (2026-11-14)
+
+198 photos, 4032 × 3024, LiDAR, no scan mat. Shiny thin pliers and a glue stick on a vinyl tablecloth with a repeating lavender print, evening light (9–10 ms exposure).
+
+| | Before | After |
+|---|---|---|
+| Draft | crashed (a frame with no depth inside the crop box) | 42 s; only the glue stick: the pliers are too thin for LiDAR |
+| Camera solving | incremental mapping 6.5 min; a block of 16 photos placed 30 cm off (repeating print), phone vs photos 81.6 mm RMS | phone poses + triangulation + bundle adjustment 63 s, 2.2 mm RMS |
+| Blurred photos | all used (sharpness varied 70×) | 11 dropped automatically |
+| Depth maps | all 198 photos, 17 min | 60 well-spread photos, ~4.5 min |
+| Texture | always, 4.5 min | optional (`texture: false` for printing) |
+| Isolation | table left in (fitted plane ~1.7 mm below the real surface) | support surface re-found from the point density, cut sized to its noise: table removed, pliers and glue stick kept |
+| Medium total | 28 min | 8 min with texture, 6 min without (verified end to end) |
+
+Still missing on this capture: the metal jaws of the pliers (specular metal; needs matte spray) and fine detail on the handles.
 
 ## GPU
 

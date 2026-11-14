@@ -446,6 +446,8 @@ function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: In
   const [quality, setQuality] = useState(capture.has_depth ? "draft" : "medium");
   const [isolate, setIsolate] = useState(capture.mode !== "space");
   const [closeBottom, setCloseBottom] = useState(true);
+  const [texture, setTexture] = useState(true);
+  const [dropBlurry, setDropBlurry] = useState(true);
   const [method, setMethod] = useState("auto");
   const [bar, setBar] = useState("100.0");
   const [error, setError] = useState<string | null>(null);
@@ -460,7 +462,7 @@ function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: In
     try {
       const printScale = Number(bar.replace(",", ".")) / 100;
       onStarted(await api.createJob(capture.id, {
-        quality, method, isolate, close_bottom: closeBottom,
+        quality, method, isolate, close_bottom: closeBottom, texture, drop_blurry: dropBlurry,
         print_scale: Number.isFinite(printScale) && printScale > 0.9 && printScale < 1.1 ? printScale : 1,
       }));
     } catch (e) {
@@ -483,6 +485,8 @@ function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: In
 
       <label className="check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /><span>Isolate the object<small>Crop, remove the surface it stands on</small></span></label>
       <label className="check"><input type="checkbox" checked={closeBottom} disabled={!isolate} onChange={(e) => setCloseBottom(e.target.checked)} /><span>Flat closed base<small>Ready for 3D printing</small></span></label>
+      <label className="check"><input type="checkbox" checked={texture} onChange={(e) => setTexture(e.target.checked)} /><span>Colour texture<small>Turn off for 3D printing: faster, geometry only</small></span></label>
+      <label className="check"><input type="checkbox" checked={dropBlurry} onChange={(e) => setDropBlurry(e.target.checked)} /><span>Skip blurred photos<small>Leaves out shaky or out-of-focus shots</small></span></label>
 
       <div className="field-row">
         <label className="field">Method
@@ -542,6 +546,8 @@ function ResultPanel({ job, refresh }: { job: Job; refresh: () => void }) {
         {r.scale.expected_error_mm != null && !calibrated && (<><dt>Expected error</dt><dd className="mono">±{NBSP}{r.scale.expected_error_mm}{NBSP}mm</dd></>)}
         {r.scale.mat && (<><dt>Mat fit</dt><dd className="mono">{r.scale.mat.tags}{NBSP}tags · {r.scale.mat.fit_rms_mm}{NBSP}mm</dd></>)}
         {r.alignment && (<><dt>Photos aligned</dt><dd className="mono">{r.alignment.registered}/{r.alignment.total} · {r.alignment.reprojection_px}{NBSP}px</dd></>)}
+        {r.photos && r.photos.dropped_blurry.length > 0 && (<><dt>Blurred, skipped</dt><dd className="mono">{r.photos.dropped_blurry.length}{NBSP}photos</dd></>)}
+        {r.alignment?.phone_pose_rms_mm != null && (<><dt>Phone vs photos</dt><dd className="mono">{r.alignment.phone_pose_rms_mm}{NBSP}mm</dd></>)}
         <dt>Mesh</dt><dd className="mono">{new Intl.NumberFormat().format(r.model.faces)}{NBSP}faces · {r.model.watertight ? "closed" : "open"}</dd>
         {r.compute && (<><dt>Computed on</dt><dd>{r.compute.dense === "gpu" ? "GPU" : "CPU"}</dd></>)}
       </dl>
