@@ -1,7 +1,7 @@
 // Typed client for the engine's HTTP API (engine/calco/server.py).
 
 // Same origin when the engine serves the built UI or Vite proxies /api; absolute inside Tauri.
-const BASE = ["7878", "5173"].includes(location.port) ? "" : "http://127.0.0.1:7878";
+const BASE = location.hostname === "tauri.localhost" || location.protocol === "tauri:" ? "http://127.0.0.1:7878" : "";
 
 export type StageState = "pending" | "running" | "done" | "failed";
 export type JobState = "queued" | "running" | "done" | "failed" | "cancelled";
