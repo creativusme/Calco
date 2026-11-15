@@ -314,7 +314,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
     p = plan(bundle, options)
     quality: Quality = QUALITY[p["quality"]]
     photo = p["method"] == "photo"
-    skip = set()
+    skip = {"combine"}  # only for two-sided scans
     if not photo:
         skip |= {"align", "select"}
     if not options.drop_blurry:
