@@ -10,7 +10,9 @@ import json
 import re
 from pathlib import Path
 
-SHEET = Path(__file__).resolve().parents[2] / "docs" / "collaudo.md"
+from .paths import field_test_sheet
+
+SHEET = field_test_sheet()
 _ITEM = re.compile(r"^- ☐ \*\*(?P<id>[A-Z]\d+[a-z]?)\*\* (?P<text>.+)$")
 _ROW = re.compile(r"^\| ☐ (?P<case>[^|]+)\|(?P<how>[^|]*)\|")
 _PLAIN = re.compile(r"^- ☐ (?P<text>.+)$")  # list items without an id (the on-site list)

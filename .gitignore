@@ -15,3 +15,5 @@ ios/build/
 *.log
 .claude/
 desktop/public/fonts/
+desktop/src-tauri/runtime/
+desktop/src-tauri/runtime-build/

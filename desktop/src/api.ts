@@ -133,6 +133,7 @@ export const api = {
   markersUrl: () => `${BASE}/api/markers.pdf`,
   demo: () => post<{ started: boolean }>("/api/demo"),
   recheckNetwork: () => post("/api/network/recheck"),
+  fixNetwork: () => post<{ started: boolean }>("/api/network/fix"),
   checklist: () => call<ChecklistData>("/api/checklist"),
   check: (id: string, body: { done?: boolean; note?: string }) => post(`/api/checklist/${encodeURIComponent(id)}`, body),
   pairing: () => call<{ codes: { address: string; code: string }[]; pin: string; port: number }>("/api/pairing"),
@@ -140,5 +141,6 @@ export const api = {
   importFile: (iid: string, file: File) =>
     call<{ ok: boolean }>(`/api/import/${iid}/files/${encodeURIComponent(file.name)}`, { method: "PUT", body: file }),
   importComplete: (iid: string, name: string | null) => post<{ capture: Capture }>(`/api/import/${iid}/complete`, { name }),
+  installSplat: () => post<{ started: boolean }>("/api/tools/install-splat"),
   installTools: () => post<{ started: boolean }>("/api/tools/install"),
 };

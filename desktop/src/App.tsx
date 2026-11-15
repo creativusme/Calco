@@ -88,9 +88,8 @@ export default function App() {
         <FieldTest />
       ) : offline ? (
         <main className="empty">
-          <h1>Engine Not Running</h1>
-          <p className="muted">Double-click <code>Start Calco.cmd</code>, or start the engine from the <code>engine</code> folder. This page reconnects by itself.</p>
-          <pre>.venv\Scripts\python -m calco serve</pre>
+          <h1>Starting the Engine…</h1>
+          <p className="muted">The first start takes a few seconds. This page connects by itself. If it stays here, close Calco and open it again.</p>
         </main>
       ) : capture ? (
         <CaptureView key={capture.id} capture={capture} captures={captures} info={info} theme={theme} refresh={refresh} onDeleted={() => setSelected(null)} />
@@ -279,15 +278,16 @@ function WifiHelp({ info, onClose }: { info: Info; onClose: () => void }) {
         <div className="dialog-body">
           <p>Windows is refusing connections from the phone:</p>
           <ul>{(info.network.problems ?? []).map((x) => <li key={x}>{x}</li>)}</ul>
-          <p><strong>The USB cable always works</strong>, without changing anything. To use Wi-Fi as well, run this once:</p>
-          <ol>
-            <li>Start menu → type <em>PowerShell</em> → right-click → <em>Run as administrator</em>.</li>
-            <li>Paste this and press Enter:</li>
-          </ol>
-          <pre>{cmd}</pre>
-          <button className="button" onClick={() => navigator.clipboard?.writeText(cmd)}>Copy Command</button>
-          <p className="muted small">It marks your network as Private, removes the rule that blocks Python and allows Calco on private networks only. Read <code>tools\allow-wifi.ps1</code> first if you like: it is short and commented.</p>
-          <button className="button" onClick={() => { api.recheckNetwork(); onClose(); }}>I Ran It · Check Again</button>
+          <p><strong>The USB cable always works</strong>, without changing anything. To use Wi-Fi as well:</p>
+          <button className="button primary wide" onClick={() => { api.fixNetwork(); onClose(); }}>Fix It</button>
+          <p className="muted small">Windows asks for permission (administrator), then Calco marks your network as Private, removes the rule that blocks it and allows it on private networks only. The warning disappears within a minute.</p>
+          <details className="muted small">
+            <summary>Do it by hand instead</summary>
+            <p>Run in PowerShell as administrator (the script is short and commented):</p>
+            <pre>{cmd}</pre>
+            <button className="button" onClick={() => navigator.clipboard?.writeText(cmd)}>Copy Command</button>
+          </details>
+          <button className="link" onClick={() => { api.recheckNetwork(); onClose(); }}>Check Again</button>
         </div>
       </div>
     </div>
@@ -675,6 +675,10 @@ function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture
       <label className="check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /><span>Isolate the object<small>Crop, remove the surface it stands on</small></span></label>
       <label className="check"><input type="checkbox" checked={closeBottom} disabled={!isolate} onChange={(e) => setCloseBottom(e.target.checked)} /><span>Flat closed base<small>Ready for 3D printing</small></span></label>
       <label className="check"><input type="checkbox" checked={texture} onChange={(e) => setTexture(e.target.checked)} /><span>Colour texture<small>Turn off for 3D printing: faster, geometry only</small></span></label>
+      {photo && info && !info.tools.splat && info.tools.gpu && (
+        <p className="tight"><button className="link small" disabled={info.tools.installing} onClick={() => api.installSplat()}>
+          {info.tools.installing ? "Setting up…" : "Add Gaussian splat (one-time 3 GB download)"}</button></p>
+      )}
       {photo && info?.tools.splat && <label className="check"><input type="checkbox" checked={splat} onChange={(e) => setSplat(e.target.checked)} /><span>Gaussian splat<small>Photoreal 3D view on the GPU, adds 10–40 min</small></span></label>}
       <label className="check"><input type="checkbox" checked={dropBlurry} onChange={(e) => setDropBlurry(e.target.checked)} /><span>Skip blurred photos<small>Leaves out shaky or out-of-focus shots</small></span></label>
 

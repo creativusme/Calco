@@ -11,6 +11,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from .paths import bundled_tools
+
 OPENMVS = {
     "version": "2.4.0",
     "url": "https://github.com/cdcseacave/openMVS/releases/download/v2.4.0/OpenMVS_Windows_x64.zip",
@@ -36,10 +38,10 @@ def openmvs_bin(name: str) -> Path | None:
     found = shutil.which(exe)
     if found:
         return Path(found)
-    root = tools_dir() / "openmvs"
-    if root.exists():
-        for p in root.rglob(exe):
-            return p
+    for root in (bundled_tools() / "openmvs", tools_dir() / "openmvs"):
+        if root.exists():
+            for p in root.rglob(exe):
+                return p
     return None
 
 
@@ -96,10 +98,10 @@ def install_openmvs(log=print) -> Path:
 
 def colmap_bin() -> Path | None:
     """Path to the CUDA build of COLMAP, or None if it is not installed."""
-    root = tools_dir() / "colmap"
-    if root.exists():
-        for p in root.rglob("colmap.exe"):
-            return p
+    for root in (bundled_tools() / "colmap", tools_dir() / "colmap"):
+        if root.exists():
+            for p in root.rglob("colmap.exe"):
+                return p
     return None
 
 
@@ -202,16 +204,13 @@ def install_splat(log=print) -> Path:
 def missing() -> list[str]:
     """Components this computer should have but does not yet."""
     out = [] if have_openmvs() else ["openmvs"]
-    if have_gpu():
-        if not colmap_bin():
-            out.append("colmap")
-        if not splat_python():
-            out.append("splat")
-    return out
+    if have_gpu() and not colmap_bin():
+        out.append("colmap")
+    return out  # the splat engine (3 GB) is optional: installed only when asked for (install_splat)
 
 
 def install_all(log=print) -> None:
-    """Everything Calco needs on this computer: OpenMVS always, the GPU engines when there is an NVIDIA GPU."""
+    """Everything Calco needs on this computer: OpenMVS always, COLMAP's GPU build with an NVIDIA GPU."""
     for name in missing():
         {"openmvs": install_openmvs, "colmap": install_colmap, "splat": install_splat}[name](log=log)
 

@@ -9,30 +9,33 @@ Calco is two programs that share one file format:
 
 Nothing leaves your computer: no cloud, no accounts, no AI service. The only downloads are the open-source tools (OpenMVS, COLMAP) and the UI fonts, once.
 
-Status: early but working end to end on the computer. The iPhone app is written and builds in CI; see `docs/roadmap.md` for what is verified and what is not.
+Status: version 1.0. See `docs/roadmap.md` for what has been verified on real scans and what has not.
 
-## Run it (Windows)
+## Install (Windows)
 
-Requirements: Python 3.12, Node 20+, an NVIDIA GPU is optional for now.
+**[Download Calco-setup.exe](https://github.com/creativusme/Calco/releases/download/desktop-latest/Calco-setup.exe)**, run it, then open **Calco** from the Start menu. That is all: the installer contains the app, the engine, Python, COLMAP (GPU) and OpenMVS. No folders from GitHub, no commands.
 
-Double-click **`Start Calco.cmd`**. The first run creates the Python environment and builds the UI, then opens `http://localhost:7878`. Allow Python through the Windows firewall on *private* networks so the phone can reach it.
+- An NVIDIA GPU makes photogrammetry several times faster; without one Calco uses the CPU.
+- The optional Gaussian-splat engine (about 3 GB) is downloaded by the app only if you ask for it (Process → *Add Gaussian splat*).
+- The installer lets the engine receive the phone's uploads on private networks. If your network is set to Public, Calco shows a **Fix It** button (Windows asks for permission once).
 
 Try it without a phone: **Create a demo capture**, then **Process**.
 
-Optional native window: **[Calco-desktop-setup.exe](https://github.com/creativusme/Calco/releases/download/desktop-latest/Calco-desktop-setup.exe)** (built by GitHub Actions). Start the engine once with `Start Calco.cmd`; after that the app starts it by itself.
+## Develop
+
+Requirements: Python 3.12, Node 20+. `Start Calco.cmd` runs everything from a source checkout.
 
 ```bash
-# the same, by hand
 cd engine && python -m venv .venv && .venv\Scripts\python -m pip install -e .[dev]
-.venv\Scripts\python -m calco tools install      # OpenMVS, needed for photogrammetry
-.venv\Scripts\python -m calco tools install-gpu  # COLMAP with CUDA (415 MB), optional, much faster
-.venv\Scripts\python -m calco serve              # API + UI on http://localhost:7878
+.venv\Scripts\python -m calco serve              # API + UI on http://localhost:7878 (downloads OpenMVS/COLMAP once)
 .venv\Scripts\python -m pytest -q                # tests on a synthetic capture
+python desktop/scripts/build_runtime.py           # the self-contained runtime the installer ships
+cd desktop && npx tauri build                     # the installer (needs Rust); CI does this on every push
 ```
 
 ## iPhone app
 
-Scans reach the computer in two ways: **by cable** (plug the iPhone in with Calco open on both; the computer pulls what is missing through Apple's USB service, nothing to configure) or **over Wi-Fi** (needs Windows to accept incoming connections: Calco on the computer tells you when it does not and how to fix it, `tools/allow-wifi.ps1`).
+Scans reach the computer in two ways: **by cable** (plug the iPhone in with Calco open on both; the computer pulls what is missing through Apple's USB service, nothing to configure) or **over Wi-Fi** (the installer allows it on private networks; on a Public network Calco offers a one-click fix).
 
 **[Download the latest iPhone app (Calco-unsigned.ipa)](https://github.com/creativusme/Calco/releases/download/ios-latest/Calco-unsigned.ipa)**, then sign and install it with Sideloadly or AltStore. Needs an iPhone with LiDAR (12 Pro or later) and iOS 17.
 

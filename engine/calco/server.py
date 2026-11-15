@@ -167,6 +167,30 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
             net.recheck()
         return {"ok": True}
 
+    @app.post("/api/network/fix")
+    def fix_network():
+        """Run tools/allow-wifi.ps1 elevated: Windows shows its administrator prompt, the owner says yes.
+        Nothing changes without that click; the script itself is short and commented."""
+        if os.name != "nt":
+            raise HTTPException(400, "only needed on Windows")
+        from .netcheck import python_exe
+        from .paths import wifi_fix_script
+
+        script = wifi_fix_script()
+        if not script.exists():
+            raise HTTPException(500, f"{script} is missing")
+        args = f'-NoProfile -ExecutionPolicy Bypass -File "{script}" -Python "{python_exe()}"'
+
+        def run():
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"Start-Process powershell -Verb RunAs -Wait -ArgumentList '{args}'"],
+                           capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if net:
+                net.recheck()
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"started": True}
+
     def install_missing() -> bool:
         """Install whatever this computer is missing, in the background. No buttons: it just happens."""
         if busy["tools"] or not tools.missing():
@@ -191,6 +215,25 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
     @app.post("/api/tools/install")
     def install_tools():
         return {"started": install_missing()}
+
+    @app.post("/api/tools/install-splat")
+    def install_splat_engine():
+        """The optional Gaussian-splat engine (PyTorch + gsplat, about 3 GB), only when the owner asks."""
+        if busy["tools"] or tools.splat_python() or not tools.have_gpu():
+            return {"started": False}
+        busy["tools"] = True
+        busy["tools_error"] = None
+
+        def work():
+            try:
+                tools.install_splat(log=lambda m: None)
+            except Exception as e:
+                busy["tools_error"] = str(e)
+            finally:
+                busy["tools"] = False
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"started": True}
 
     @app.get("/api/mat.pdf")
     def mat_pdf(size: str = "A4"):
@@ -503,7 +546,9 @@ def advertise(port: int):
 def serve(host: str = "0.0.0.0", port: int = PORT, library: Path | None = None) -> None:
     import uvicorn
 
-    ui = Path(__file__).resolve().parents[2] / "desktop" / "dist"
+    from .paths import ui_dir
+
+    ui = ui_dir()
     from .netcheck import NetWatch
     from .usb import UsbBridge
 
