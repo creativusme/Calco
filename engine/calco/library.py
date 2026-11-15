@@ -19,6 +19,15 @@ from pathlib import Path
 from .bundle import BundleError, load_bundle
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Stop a job and everything it started (COLMAP, OpenMVS): killing only Python leaves them running."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    else:
+        proc.kill()
+
+
 def default_library() -> Path:
     return Path(os.environ.get("CALCO_LIBRARY") or Path.home() / "Calco")
 
@@ -144,7 +153,7 @@ class Library:
     def cancel_job(self, jid: str) -> None:
         with self._lock:
             if self._running == jid and self._proc and self._proc.poll() is None:
-                self._proc.kill()
+                _kill_tree(self._proc)
             self.set_state(jid, "cancelled")
 
     def delete_job(self, jid: str) -> None:
