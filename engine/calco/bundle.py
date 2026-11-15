@@ -33,6 +33,7 @@ class Frame:
     depth_intrinsics: tuple[float, float, float, float] | None = None  # in depth pixels
     tracking: str = "normal"
     sharpness: float | None = None
+    side: int = 0  # 0 = as placed, 1 = turned over once, ... (Flip button on the phone)
 
     @property
     def K(self) -> np.ndarray:
@@ -115,6 +116,7 @@ class Bundle:
     manifest: dict
     frames: list[Frame] = field(default_factory=list)
     crop_box: CropBox | None = None
+    side_boxes: dict[int, CropBox] = field(default_factory=dict)  # crop box placed for each side
 
     @property
     def id(self) -> str:
@@ -137,6 +139,17 @@ class Bundle:
     def has_depth(self) -> bool:
         return sum(f.depth_file is not None for f in self.frames) >= 3
 
+    @property
+    def sides(self) -> list[int]:
+        return sorted({f.side for f in self.frames})
+
+    def only_side(self, side: int) -> "Bundle":
+        """The photos of one side, with the crop box placed for that side."""
+        from dataclasses import replace
+
+        return replace(self, frames=[f for f in self.frames if f.side == side],
+                       crop_box=self.side_boxes.get(side, self.crop_box if side == 0 else None), side_boxes={})
+
     def summary(self) -> dict:
         return {
             "id": self.id,
@@ -149,6 +162,7 @@ class Bundle:
             "has_crop_box": self.crop_box is not None,
             "device": self.manifest.get("device", {}).get("model"),
             "resolution": [self.frames[0].width, self.frames[0].height] if self.frames else None,
+            "sides": len(self.sides),
         }
 
 
@@ -195,6 +209,7 @@ def load_bundle(path: str | Path) -> Bundle:
                 depth_intrinsics=tuple(float(v) for v in d["intrinsics"]) if d and d.get("intrinsics") else None,
                 tracking=raw.get("tracking", "normal"),
                 sharpness=raw.get("sharpness"),
+                side=int(raw.get("side", 0)),
             )
         )
     if len(frames) < 3:
@@ -202,4 +217,9 @@ def load_bundle(path: str | Path) -> Bundle:
 
     cb = manifest.get("crop_box")
     crop = CropBox(np.array(cb["center"], float), np.array(cb["size"], float), float(cb.get("yaw", 0))) if cb else None
-    return Bundle(path=path, manifest=manifest, frames=frames, crop_box=crop)
+    sides = {}
+    for k, entry in enumerate(manifest.get("sides") or []):
+        box = (entry or {}).get("crop_box")
+        if box:
+            sides[k] = CropBox(np.array(box["center"], float), np.array(box["size"], float), float(box.get("yaw", 0)))
+    return Bundle(path=path, manifest=manifest, frames=frames, crop_box=crop, side_boxes=sides)

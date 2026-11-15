@@ -16,6 +16,7 @@ export interface Report {
   model: { vertices: number; faces: number; dimensions_mm: [number, number, number]; watertight: boolean };
   compute?: { features: "gpu" | "cpu"; dense: "gpu" | "cpu" };
   photos?: { dropped_blurry: number[]; used: number };
+  combined?: { overlap_pct: number; distance_mm: number };
   scale: {
     source: "mat" | "lidar" | "none";
     mat: { layout: string; tags: number; fit_rms_mm: number } | null;
@@ -35,6 +36,9 @@ export interface Job {
   created: number;
   user_scale: number;
   progress: number | null;
+  started: number | null;
+  finished: number | null;
+  eta_seconds: number | null;
   message: string | null;
   error: string | null;
   stages: Stage[] | null;
@@ -67,7 +71,8 @@ export interface Info {
   port: number;
   addresses: string[];
   hostname: string;
-  tools: { openmvs: boolean; colmap_cuda: boolean; gpu: string | null; installing: boolean };
+  tools: { openmvs: boolean; colmap_cuda: boolean; gpu: string | null; installing: boolean;
+    install_progress: { component: string; done: number; total: number } | null; install_error: string | null };
   presets: { quality: Quality[]; profiles: Profile[]; formats: string[]; units: string[] };
   demo_running: boolean;
   phone: PhoneStatus;
@@ -83,6 +88,10 @@ export interface PhoneStatus {
   error?: string | null;
   usb_service: boolean | null;
 }
+
+export interface ChecklistItem { id: string | null; text: string; heading?: boolean }
+export interface ChecklistSection { title: string; items: ChecklistItem[] }
+export interface ChecklistData { sections: ChecklistSection[]; state: Record<string, { done: boolean; note: string }> }
 
 export interface ExportResult { folder: string; files: { format: string; file: string; size: number }[] }
 
@@ -118,7 +127,9 @@ export const api = {
   mat3dUrl: (size: string) => `${BASE}/api/mat.zip?size=${size}`,
   demo: () => post<{ started: boolean }>("/api/demo"),
   recheckNetwork: () => post("/api/network/recheck"),
+  checklist: () => call<ChecklistData>("/api/checklist"),
+  check: (id: string, body: { done?: boolean; note?: string }) => post(`/api/checklist/${encodeURIComponent(id)}`, body),
   pairing: () => call<{ codes: { address: string; code: string }[]; pin: string; port: number }>("/api/pairing"),
   newPin: () => post<{ pin: string }>("/api/pairing/new"),
-  installTools: (what: "openmvs" | "colmap") => post<{ started: boolean }>(`/api/tools/install?what=${what}`),
+  installTools: () => post<{ started: boolean }>("/api/tools/install"),
 };

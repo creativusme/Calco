@@ -47,6 +47,31 @@ def have_openmvs() -> bool:
     return all(openmvs_bin(n) for n in ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh", "TextureMesh"))
 
 
+# What the automatic setup is doing right now, for the UI: {"component", "done", "total"} or None.
+PROGRESS: dict | None = None
+
+
+def _download(url: str, target: Path, component: str, log) -> None:
+    """Download with progress reported in PROGRESS; resumes nothing, retries once."""
+    global PROGRESS
+
+    def hook(blocks: int, size: int, total: int) -> None:
+        global PROGRESS
+        PROGRESS = {"component": component, "done": blocks * size, "total": max(total, 0)}
+
+    for attempt in range(2):
+        try:
+            PROGRESS = {"component": component, "done": 0, "total": 0}
+            urllib.request.urlretrieve(url, target, reporthook=hook)
+            return
+        except OSError as e:
+            log(f"Download of {component} failed ({e}){', retrying' if attempt == 0 else ''}")
+            if attempt:
+                raise
+        finally:
+            PROGRESS = None
+
+
 def install_openmvs(log=print) -> Path:
     root = tools_dir() / "openmvs"
     if have_openmvs():
@@ -55,7 +80,7 @@ def install_openmvs(log=print) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     archive = root / "openmvs.zip"
     log(f"Downloading OpenMVS {OPENMVS['version']} from {OPENMVS['url']}")
-    urllib.request.urlretrieve(OPENMVS["url"], archive)
+    _download(OPENMVS["url"], archive, "OpenMVS", log)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     if OPENMVS["sha256"] and digest != OPENMVS["sha256"]:
         archive.unlink()
@@ -93,7 +118,7 @@ def install_colmap(log=print) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     archive = root / "colmap.zip"
     log(f"Downloading COLMAP {COLMAP['version']} CUDA build (about 415 MB) from {COLMAP['url']}")
-    urllib.request.urlretrieve(COLMAP["url"], archive)
+    _download(COLMAP["url"], archive, "GPU engine (COLMAP)", log)
     h = hashlib.sha256()
     with archive.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -108,6 +133,20 @@ def install_colmap(log=print) -> Path:
     if not colmap_bin():
         raise RuntimeError(f"colmap.exe not found after extracting to {root}")
     return root
+
+
+def missing() -> list[str]:
+    """Components this computer should have but does not yet."""
+    out = [] if have_openmvs() else ["openmvs"]
+    if not colmap_bin() and have_gpu():
+        out.append("colmap")
+    return out
+
+
+def install_all(log=print) -> None:
+    """Everything Calco needs on this computer: OpenMVS always, the CUDA engine when there is an NVIDIA GPU."""
+    for name in missing():
+        (install_openmvs if name == "openmvs" else install_colmap)(log=log)
 
 
 _GLOG = re.compile(r"^[IWEF]\d{8} [\d:.]+\s+\d+ \S+\] ")  # COLMAP log prefix

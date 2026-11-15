@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Capture, type ExportResult, type Info, type Job } from "./api";
+import { api, type Capture, type ChecklistData, type ExportResult, type Info, type Job } from "./api";
 import { Viewer, type ViewMode } from "./Viewer";
 
 const NBSP = " ";
@@ -24,6 +24,7 @@ export default function App() {
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [offline, setOffline] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<"captures" | "checklist">("captures");
 
   const refresh = useCallback(async () => {
     try {
@@ -57,10 +58,13 @@ export default function App() {
             <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span>
           </button>
         </div>
+        <button className={`side-link ${view === "checklist" ? "is-selected" : ""}`} onClick={() => setView(view === "checklist" ? "captures" : "checklist")}>
+          <span aria-hidden="true">☑</span> Field test
+        </button>
         <div className="label">Captures <span className="count">{captures.length || ""}</span></div>
         <nav className="capture-list" aria-label="Captures">
           {captures.map((c) => (
-            <button key={c.id} className={`capture ${c.id === selected ? "is-selected" : ""}`} onClick={() => setSelected(c.id)}>
+            <button key={c.id} className={`capture ${c.id === selected && view === "captures" ? "is-selected" : ""}`} onClick={() => { setSelected(c.id); setView("captures"); }}>
               <img src={api.previewUrl(c.id)} alt="" width={48} height={36} loading="lazy" />
               <span className="capture-text">
                 <span className="capture-name">{c.name}</span>
@@ -74,14 +78,16 @@ export default function App() {
         <SidebarFooter info={info} offline={offline} />
       </aside>
 
-      {offline ? (
+      {view === "checklist" && !offline ? (
+        <FieldTest />
+      ) : offline ? (
         <main className="empty">
           <h1>Engine Not Running</h1>
           <p className="muted">Double-click <code>Start Calco.cmd</code>, or start the engine from the <code>engine</code> folder. This page reconnects by itself.</p>
           <pre>.venv\Scripts\python -m calco serve</pre>
         </main>
       ) : capture ? (
-        <CaptureView key={capture.id} capture={capture} info={info} theme={theme} refresh={refresh} onDeleted={() => setSelected(null)} />
+        <CaptureView key={capture.id} capture={capture} captures={captures} info={info} theme={theme} refresh={refresh} onDeleted={() => setSelected(null)} />
       ) : (
         <Welcome info={info} refresh={refresh} />
       )}
@@ -259,8 +265,8 @@ function Welcome({ info, refresh }: { info: Info | null; refresh: () => void }) 
 
 type Tab = "process" | "result" | "export";
 
-function CaptureView({ capture, info, theme, refresh, onDeleted }: {
-  capture: Capture; info: Info | null; theme: string; refresh: () => void; onDeleted: () => void;
+function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
+  capture: Capture; captures: Capture[]; info: Info | null; theme: string; refresh: () => void; onDeleted: () => void;
 }) {
   const jobs = capture.jobs;
   const [jobId, setJobId] = useState<string | null>(null);
@@ -364,7 +370,7 @@ function CaptureView({ capture, info, theme, refresh, onDeleted }: {
           ))}
         </div>
         <div className="tab-body">
-          {tab === "process" && <ProcessPanel capture={capture} info={info} onStarted={(j) => { setJobId(j.id); refresh(); }} />}
+          {tab === "process" && <ProcessPanel capture={capture} captures={captures} info={info} onStarted={(j) => { setJobId(j.id); refresh(); }} />}
           {tab === "result" && hasModel && job?.report && <ResultPanel job={job} refresh={refresh} />}
           {tab === "export" && hasModel && job && info && <ExportPanel job={job} info={info} />}
         </div>
@@ -430,6 +436,7 @@ function Pipeline({ job, onLog, refresh }: { job: Job; onLog: () => void; refres
       </ol>
       <div className="pipeline-status" aria-live="polite">
         {active(job) && <span className="mono">{Math.round((job.progress ?? 0) * 100)}%</span>}
+        {job.state === "running" && <JobClock job={job} />}
         <span className={`status-text ${job.state === "failed" ? "error-text" : "muted"}`}>
           {job.state === "failed" ? job.error ?? "Failed" : job.state === "cancelled" ? "Cancelled" : job.state === "queued" ? "Waiting in the queue…" : job.message}
         </span>
@@ -442,7 +449,115 @@ function Pipeline({ job, onLog, refresh }: { job: Job; onLog: () => void; refres
   );
 }
 
-function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: Info | null; onStarted: (j: Job) => void }) {
+/** The field test sheet (docs/collaudo.md) with ticks and notes saved on this computer. */
+function FieldTest() {
+  const [data, setData] = useState<ChecklistData | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => { api.checklist().then(setData).catch(() => setError(true)); }, []);
+  if (error) return <main className="empty"><h1>Field Test</h1><p className="muted">The test sheet could not be loaded.</p></main>;
+  if (!data) return <main className="empty"><p className="muted">Loading…</p></main>;
+  const items = data.sections.flatMap((s) => s.items.filter((i) => i.id));
+  const done = items.filter((i) => data.state[i.id!]?.done).length;
+  const update = (id: string, patch: { done?: boolean; note?: string }) => {
+    setData({ ...data, state: { ...data.state, [id]: Object.assign({ done: false, note: "" }, data.state[id], patch) } });
+    api.check(id, patch);
+  };
+  return (
+    <main className="checklist">
+      <header className="checklist-head">
+        <h1>Field Test</h1>
+        <span className="mono">{done}/{items.length} done</span>
+        <div className="checklist-bar"><div style={{ width: `${(done / Math.max(items.length, 1)) * 100}%` }} /></div>
+      </header>
+      <div className="checklist-body">
+        {data.sections.map((s) => {
+          const own = s.items.filter((i) => i.id);
+          const ok = own.filter((i) => data.state[i.id!]?.done).length;
+          return (
+            <section key={s.title}>
+              <h2>{s.title} <span className="muted mono small">{ok}/{own.length}</span></h2>
+              {s.items.map((i, k) => i.heading ? <h3 key={k}>{i.text}</h3> : (
+                <CheckRow key={i.id} text={i.text} entry={data.state[i.id!]} onChange={(p) => update(i.id!, p)} />
+              ))}
+            </section>
+          );
+        })}
+      </div>
+    </main>
+  );
+}
+
+function CheckRow({ text, entry, onChange }: { text: string; entry?: { done: boolean; note: string }; onChange: (p: { done?: boolean; note?: string }) => void }) {
+  const [note, setNote] = useState(entry?.note ?? "");
+  const [open, setOpen] = useState(!!entry?.note);
+  return (
+    <div className={`check-row ${entry?.done ? "is-done" : ""}`}>
+      <label>
+        <input type="checkbox" checked={!!entry?.done} onChange={(e) => onChange({ done: e.target.checked })} />
+        <span>{richText(text)}</span>
+      </label>
+      {open ? (
+        <input className="check-note" name="note" autoComplete="off" placeholder="Note…" value={note}
+          onChange={(e) => setNote(e.target.value)} onBlur={() => onChange({ note })} />
+      ) : (
+        <button className="link small" onClick={() => setOpen(true)}>Add note</button>
+      )}
+    </div>
+  );
+}
+
+/** **bold** and `code` from the markdown sheet, without injecting HTML. */
+function richText(text: string) {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) =>
+    part.startsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code>
+      : part.replace(/\*([^*]+)\*/g, "$1"));
+}
+
+/** First-start setup: components download by themselves; this only shows how far along it is. */
+function SetupNotice({ info }: { info: Info }) {
+  const p = info.tools.install_progress;
+  const pct = p && p.total ? Math.round((p.done / p.total) * 100) : null;
+  if (info.tools.install_error) {
+    return (
+      <div className="notice">
+        Setup could not download a component: {info.tools.install_error}
+        <button className="button" onClick={() => api.installTools()}>Try Again</button>
+      </div>
+    );
+  }
+  return (
+    <div className="notice" aria-live="polite">
+      <span>Setting up {p?.component ?? "components"}{pct != null ? ` · ${pct}%` : "…"} <span className="muted">(once, on the first start)</span></span>
+      {pct != null && <div className="phone-bar"><div style={{ width: `${pct}%` }} /></div>}
+    </div>
+  );
+}
+
+/** Elapsed time, time left and expected finish, ticking every second between status updates. */
+function JobClock({ job }: { job: Job }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!job.started) return null;
+  const elapsed = Math.max(0, now - job.started);
+  const clock = (s: number) => {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+    return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+  };
+  const left = job.eta_seconds;
+  const end = left != null ? new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date((now + left) * 1000)) : null;
+  return (
+    <span className="job-clock mono" title="Elapsed · estimated time left · expected finish">
+      {clock(elapsed)}
+      {left != null ? <> · ~{fmtTime(left)} left · done ≈ {end}</> : <span className="muted"> · estimating…</span>}
+    </span>
+  );
+}
+
+function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture; captures: Capture[]; info: Info | null; onStarted: (j: Job) => void }) {
   const [quality, setQuality] = useState(capture.has_depth ? "draft" : "medium");
   const [isolate, setIsolate] = useState(capture.mode !== "space");
   const [closeBottom, setCloseBottom] = useState(true);
@@ -455,7 +570,6 @@ function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: In
   const q = qualities.find((x) => x.name === quality);
   const photo = method === "photo" || (method === "auto" && q?.method === "photo");
   const needsOpenMVS = photo && info && !info.tools.openmvs;
-  const canUseGpu = photo && info && info.tools.gpu && !info.tools.colmap_cuda;
 
   const start = async () => {
     setError(null);
@@ -501,23 +615,53 @@ function ProcessPanel({ capture, info, onStarted }: { capture: Capture; info: In
         </label>
       </div>
 
-      {needsOpenMVS ? (
-        <div className="notice">
-          Photogrammetry needs OpenMVS (22{NBSP}MB, downloaded once).
-          <button className="button" disabled={info!.tools.installing} onClick={() => api.installTools("openmvs")}>{info!.tools.installing ? "Installing…" : "Install OpenMVS"}</button>
-        </div>
-      ) : (
-        <>
-          {canUseGpu && (
-            <div className="notice">
-              The graphics card is not used yet. The GPU engine is a 415{NBSP}MB download, once.
-              <button className="button" disabled={info!.tools.installing} onClick={() => api.installTools("colmap")}>{info!.tools.installing ? "Downloading…" : "Enable GPU"}</button>
-            </div>
-          )}
-          <button className="button primary wide" onClick={start} disabled={!!capture.error}>Process</button>
-        </>
-      )}
+      {info && (info.tools.installing || info.tools.install_error) && <SetupNotice info={info} />}
+      <button className="button primary wide" onClick={start} disabled={!!capture.error || !!needsOpenMVS}>
+        {needsOpenMVS ? "Waiting for setup…" : "Process"}
+      </button>
       {error && <p className="error-text" aria-live="polite">{error}</p>}
+      <CombinePanel capture={capture} captures={captures} onStarted={onStarted} />
+    </div>
+  );
+}
+
+/** Two finished results of the same part (e.g. front and back) aligned by shape and fused into one. */
+function CombinePanel({ capture, captures, onStarted }: { capture: Capture; captures: Capture[]; onStarted: (j: Job) => void }) {
+  const done = (c: Capture) => c.jobs.filter((j) => j.state === "done" && j.has_model);
+  const mine = done(capture);
+  const others = captures.flatMap((c) => done(c).map((j) => ({ j, c })));
+  const [a, setA] = useState(mine[0]?.id ?? "");
+  const [b, setB] = useState("");
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!mine.length || others.length < 2) return null;
+  const label = (j: Job, c: Capture) => `${c.name} · ${String(j.options.quality ?? "")}`;
+  const start = async () => {
+    setError(null);
+    try { onStarted(await api.createJob(capture.id, { combine: [a, b] })); setOpen(false); }
+    catch (e) { setError((e as Error).message); }
+  };
+  return (
+    <div className="combine">
+      <button className="link" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Hide" : "Combine with another side…"}</button>
+      {open && (
+        <div className="combine-body">
+          <p className="hint tight">For parts scanned twice, e.g. upright and turned over. The second is aligned to the first by its shape, then both are fused into one closed model.</p>
+          <label className="field">This side
+            <select name="side-a" value={a} onChange={(e) => setA(e.target.value)}>
+              {mine.map((j) => <option key={j.id} value={j.id}>{label(j, capture)}</option>)}
+            </select>
+          </label>
+          <label className="field">Other side
+            <select name="side-b" value={b} onChange={(e) => setB(e.target.value)}>
+              <option value="">Choose a result…</option>
+              {others.filter(({ j }) => j.id !== a).map(({ j, c }) => <option key={j.id} value={j.id}>{label(j, c)}</option>)}
+            </select>
+          </label>
+          <button className="button wide" onClick={start} disabled={!a || !b}>Combine Sides</button>
+          {error && <p className="error-text">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -546,6 +690,7 @@ function ResultPanel({ job, refresh }: { job: Job; refresh: () => void }) {
         {r.scale.expected_error_mm != null && !calibrated && (<><dt>Expected error</dt><dd className="mono">±{NBSP}{r.scale.expected_error_mm}{NBSP}mm</dd></>)}
         {r.scale.mat && (<><dt>Mat fit</dt><dd className="mono">{r.scale.mat.tags}{NBSP}tags · {r.scale.mat.fit_rms_mm}{NBSP}mm</dd></>)}
         {r.alignment && (<><dt>Photos aligned</dt><dd className="mono">{r.alignment.registered}/{r.alignment.total} · {r.alignment.reprojection_px}{NBSP}px</dd></>)}
+        {r.combined && (<><dt>Sides overlap</dt><dd className="mono">{r.combined.overlap_pct}%</dd><dt>Sides distance</dt><dd className="mono">{r.combined.distance_mm}{NBSP}mm</dd></>)}
         {r.photos && r.photos.dropped_blurry.length > 0 && (<><dt>Blurred, skipped</dt><dd className="mono">{r.photos.dropped_blurry.length}{NBSP}photos</dd></>)}
         {r.alignment?.phone_pose_rms_mm != null && (<><dt>Phone vs photos</dt><dd className="mono">{r.alignment.phone_pose_rms_mm}{NBSP}mm</dd></>)}
         <dt>Mesh</dt><dd className="mono">{new Intl.NumberFormat().format(r.model.faces)}{NBSP}faces · {r.model.watertight ? "closed" : "open"}</dd>

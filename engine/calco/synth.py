@@ -90,7 +90,8 @@ def _render(scene, obj_id, ground_id, mat_img, mat_mm, K, w2c, width, height):
 
 def make_synthetic_bundle(out_dir: str | Path, views_per_ring: int = 18, image_size=(1280, 960),
                           pose_noise_mm: float = 2.0, pose_noise_deg: float = 0.15,
-                          depth_noise_mm: float = 3.0, with_mat: bool = True, seed: int = 1) -> Path:
+                          depth_noise_mm: float = 3.0, with_mat: bool = True, seed: int = 1,
+                          turned_over: bool = False) -> Path:
     """Write a capture bundle to out_dir (should end in .calco) and return its path."""
     out = Path(out_dir)
     (out / "frames").mkdir(parents=True, exist_ok=True)
@@ -98,7 +99,11 @@ def make_synthetic_bundle(out_dir: str | Path, views_per_ring: int = 18, image_s
     rng = np.random.default_rng(seed)
 
     scene = o3d.t.geometry.RaycastingScene()
-    obj_id = scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(_object_mesh()))
+    obj = _object_mesh()
+    if turned_over:  # the same part lying upside down (the other side of a two-sided scan)
+        obj.rotate(o3d.geometry.get_rotation_matrix_from_xyz([np.pi, 0, 0.6]), center=(0, 0, 0))
+        obj.translate([0, -obj.get_min_bound()[1], 0])
+    obj_id = scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(obj))
     ground_id = scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(_ground_mesh()))
 
     layout = LAYOUTS["A4"]

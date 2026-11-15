@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--name", default="model")
     e.add_argument("--no-texture", action="store_true")
 
+    c = sub.add_parser("combine", help="align and fuse two finished results (both sides of a part)")
+    c.add_argument("job_a", type=Path)
+    c.add_argument("job_b", type=Path)
+    c.add_argument("--job-dir", type=Path, required=True)
+
     y = sub.add_parser("synth", help="write a synthetic capture bundle (for testing)")
     y.add_argument("out", type=Path)
     y.add_argument("--views", type=int, default=18, help="views per ring")
@@ -40,7 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--print3d", action="store_true", help="write a zip of STL files for a 3D-printed mat")
 
     t = sub.add_parser("tools", help="external tools: OpenMVS, and COLMAP with CUDA for the GPU")
-    t.add_argument("action", choices=["install", "install-gpu", "status"])
+    t.add_argument("action", choices=["install", "install-gpu", "status"],
+                   help="install = everything this computer needs (OpenMVS, and the GPU engine with an NVIDIA card)")
 
     a = ap.parse_args(argv)
 
@@ -67,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
 
         for fmt in a.format:
             print(export_model(a.job_dir / "result", a.job_dir / "exports", a.name, fmt, a.units, not a.no_texture))
+    elif a.cmd == "combine":
+        from .pipeline import run_combine
+
+        try:
+            report = run_combine(a.job_a, a.job_b, a.job_dir)
+        except Exception as ex:
+            print(f"FAILED: {ex}", file=sys.stderr)
+            return 1
+        print(json.dumps({k: report.get(k) for k in ("combined", "model", "seconds")}, indent=1))
     elif a.cmd == "synth":
         from .synth import make_synthetic_bundle
 
@@ -79,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         from . import tools
 
         if a.action == "install":
-            tools.install_openmvs()
+            tools.install_all()
         elif a.action == "install-gpu":
             tools.install_colmap()
         print(json.dumps(tools.status(), indent=1))

@@ -41,8 +41,12 @@ A capture bundle is a directory named `<id>.calco` written by the phone and read
                  "pose": [ … ], "intrinsics": [fx, fy, cx, cy] },  // null when no LiDAR frame
       "exposure": { "duration": 0.008, "iso": 80 },
       "sharpness": 0.83                         // optional, 0..1, phone-side estimate
+      "side": 1                                 // optional: 0 as placed, 1 after the first Flip, ...
     }
   ],
+
+  // optional, only when the part was turned over during the scan: the crop box of each side
+  "sides": [ { "crop_box": { … } }, { "crop_box": { … } } ],
 
   "notes": [ { "text": "serial plate on the left", "file": null, "position": [x, y, z] } ],
   "location": { "lat": 45.07, "lon": 7.68, "heading": 120.0 }   // optional
@@ -57,6 +61,10 @@ A capture bundle is a directory named `<id>.calco` written by the phone and read
 - `depth.pose` and `depth.intrinsics` (in depth pixels) are optional. The phone writes them because the depth map comes from the video frame, a few milliseconds away from the high-resolution photo. When absent, the photo's pose and scaled intrinsics apply.
 - Depth pixels with value `0`, `NaN` or confidence `0` are invalid.
 - `mode: macro` and `mode: import` frames have `pose: null` and `depth: null`; the engine then runs full structure-from-motion and takes scale from the scan mat or a manual measurement.
+
+## Sides (Flip)
+
+A part can be scanned upright and then turned over within one capture. Every frame carries `side`; `sides[k].crop_box` is the box placed for side k (the top-level `crop_box` stays the first side's). The engine reconstructs each side on its own and fuses them, aligning them by shape: the support surface moves with the part, so it cannot be the reference. Frames without `side` are side 0, so older captures read unchanged.
 
 ## Transfer protocol
 

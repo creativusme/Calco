@@ -213,3 +213,37 @@ def test_mixed_phone_and_closeup_photos(tmp_path):
     r = run_sfm(b, tmp_path / "job", QUALITY["draft"], log=lambda *_: None, use_gpu=False)
     assert r.registered == len(b.frames)
     assert r.aligned and r.pose_rms_mm < 10
+
+
+def test_two_sided_scan_is_combined(tmp_path):
+    """Flip on the phone: photos of side 0, then of the part turned over (side 1). The engine
+    reconstructs each side and fuses them into one closed part of the right size."""
+    import json as _json
+    import shutil
+
+    a = make_synthetic_bundle(tmp_path / "a.calco", views_per_ring=8, image_size=(640, 480), seed=11)
+    b = make_synthetic_bundle(tmp_path / "b.calco", views_per_ring=8, image_size=(640, 480), seed=12, turned_over=True)
+    ma, mb = _json.loads((a / "manifest.json").read_text()), _json.loads((b / "manifest.json").read_text())
+    offset = len(ma["frames"])
+    for f in mb["frames"]:  # move side 1's files into the first bundle under new names
+        new = f["id"] + offset
+        for key, sub in (("image", None), ("depth", "file"), ("depth", "confidence")):
+            old = f[key] if sub is None else f[key][sub]
+            target = old.replace(f"{f['id']:06d}", f"{new:06d}")
+            shutil.copy(b / old, a / target)
+            if sub is None:
+                f[key] = target
+            else:
+                f[key][sub] = target
+        f["id"], f["side"] = new, 1
+    ma["frames"] += mb["frames"]
+    ma["sides"] = [{"crop_box": ma["crop_box"]}, {"crop_box": mb["crop_box"]}]
+    (a / "manifest.json").write_text(_json.dumps(ma))
+
+    bundle = load_bundle(a)
+    assert bundle.sides == [0, 1] and len(bundle.only_side(1).frames) == 16
+    report = run(a, tmp_path / "job", Options(quality="draft", texture=False))
+    dims = sorted(report["model"]["dimensions_mm"])
+    assert report["combined"]["overlap_pct"] > 40
+    assert all(abs(d - t) < 10 for d, t in zip(dims, sorted(TRUE_MM))), dims  # LiDAR: within 1 cm
+    assert (tmp_path / "job" / "result" / "side2.ply").exists()

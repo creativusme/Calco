@@ -21,6 +21,8 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published var shutterCount = 0
     /// True while the phone is too close for the main lens: LiDAR paused, close-up camera on.
     @Published private(set) var closeUp = false
+    /// Which side of the part is being scanned: 0 as placed, 1 after turning it over (Flip).
+    @Published private(set) var side = 0
     @Published private(set) var closeUpSince = Date.distantPast
     /// Bumped by the shutter button so the close-up camera takes one photo.
     @Published private(set) var manualShot = 0
@@ -56,6 +58,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         return mm > 0 ? max(0.10, Float(mm) / 1000 * 1.1) : 0.2
     }()
     private var focus: simd_float3?
+    private var sideBoxes: [Int: CropBox] = [:]  // crop box of each finished side
     private var boxNode: SCNNode?
     private let created = Date()
     private let haptic = UIImpactFeedbackGenerator(style: .rigid)
@@ -122,6 +125,23 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
 
     func requestLeaveCloseUp() { leaveCloseUpRequest += 1 }
 
+    /// The part is about to be turned over to scan its other side. Photos taken from now on belong to
+    /// the next side; the engine reconstructs each side and fuses them by shape.
+    func flip() {
+        guard !isRecording, frameCount > 0 else { return }
+        sideBoxes[side] = cropBox
+        side += 1
+        cropBox = nil
+        boxNode?.removeFromParentNode()
+        boxNode = nil
+        focus = nil
+        shotPositions.removeAll()
+        coverage = [Bool](repeating: false, count: Self.sectors * 2)
+        lastShot = nil
+        hint = "Turn the part over, then Place box again and tap Start"
+        haptic.impactOccurred(intensity: 1)
+    }
+
     func shootOnce() {
         if closeUp { manualShot += 1 } else { takeManualPhoto() }
     }
@@ -129,6 +149,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     /// A close-up photo from the macro camera: no pose, no depth, intrinsics unknown (0) so the
     /// engine estimates them from the photo's EXIF data.
     func appendPhoto(jpeg: Data, width: Int, height: Int) {
+        let side = self.side
         ioQueue.async { [self] in
             let id = nextID
             nextID += 1
@@ -136,7 +157,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
             let record = FrameRecord(
                 id: id, image: "frames/\(name).jpg", width: width, height: height,
                 timestamp: ProcessInfo.processInfo.systemUptime, intrinsics: [0, 0, Float(width) / 2, Float(height) / 2],
-                pose: nil, tracking: "none", depth: nil, exposure: nil)
+                pose: nil, tracking: "none", depth: nil, exposure: nil, side: side > 0 ? side : nil)
             do {
                 try jpeg.write(to: bundleURL.appendingPathComponent(record.image))
                 records.append(record)
@@ -371,6 +392,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func save(image: CVPixelBuffer, camera: ARCamera, timestamp: TimeInterval, depth: DepthPayload?) {
+        let side = self.side
         let k = camera.intrinsics
         let res = camera.imageResolution
         let pose = Self.rowMajor(camera.transform)
@@ -384,7 +406,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
             var record = FrameRecord(
                 id: id, image: "frames/\(name).jpg", width: Int(res.width), height: Int(res.height),
                 timestamp: timestamp, intrinsics: [k[0][0], k[1][1], k[2][0], k[2][1]], pose: pose,
-                tracking: "normal", depth: nil, exposure: Exposure(duration: exposure))
+                tracking: "normal", depth: nil, exposure: Exposure(duration: exposure), side: side > 0 ? side : nil)
             do {
                 let jpeg = bundleURL.appendingPathComponent(record.image)
                 let options: [CIImageRepresentationOption: Any] =
@@ -434,6 +456,10 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         }
         let nameFormat = DateFormatter()
         nameFormat.dateFormat = "d MMM HH:mm"
+        // crop box of every side, the current one last (read on the main thread, where it changes)
+        let boxes: [CropBox?] = DispatchQueue.main.sync {
+            (0...side).map { $0 == side ? cropBox : sideBoxes[$0] }
+        }
         let manifest = Manifest(
             id: captureID,
             name: "\(mode.title) \(nameFormat.string(from: created))",
@@ -441,8 +467,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
             mode: mode.rawValue,
             device: DeviceInfo(model: model, os: UIDevice.current.systemVersion,
                                app: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"),
-            crop_box: DispatchQueue.main.sync { cropBox },
-            frames: records)
+            crop_box: boxes.first ?? nil,
+            frames: records,
+            sides: boxes.count > 1 ? boxes.map { SideRecord(crop_box: $0) } : nil)
         if let data = try? JSONEncoder().encode(manifest) {
             try? data.write(to: bundleURL.appendingPathComponent("manifest.json"), options: .atomic)
         }

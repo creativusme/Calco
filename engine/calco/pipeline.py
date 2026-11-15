@@ -55,6 +55,7 @@ STAGES = [
     ("cleanup", "Isolate object"),
     ("texture", "Texture"),
     ("finalize", "Write result"),
+    ("combine", "Combine sides"),
 ]
 
 
@@ -80,19 +81,33 @@ def plan(bundle: Bundle, options: Options) -> dict:
     return {"method": method, "isolate": isolate, "quality": quality.name, "notes": notes}
 
 
+# How much of the total time each stage takes, measured on real captures (photogrammetry is
+# dominated by the depth maps; LiDAR fusion by fusing and texturing). Used for a progress bar and a
+# remaining-time estimate that move evenly instead of jumping stage by stage.
+STAGE_WEIGHTS = {
+    "photo": {"ingest": 0.2, "select": 0.5, "align": 10, "scale": 0.5, "geometry": 75, "cleanup": 1,
+              "texture": 12, "finalize": 0.5, "combine": 5},
+    "lidar": {"ingest": 0.2, "select": 0.5, "align": 1, "scale": 2, "geometry": 45, "cleanup": 2,
+              "texture": 45, "finalize": 1},
+}
+
+
 class Job:
     """Progress, log and status file for one pipeline run."""
 
-    def __init__(self, job_dir: Path, stage_names: list[str]):
+    def __init__(self, job_dir: Path, stage_names: list, method: str = "photo", forward=None):
         self.dir = Path(job_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.dir / "log.txt"
         self.status = {
             "state": "running", "progress": 0.0, "message": "Starting", "error": None,
-            "started": time.time(), "finished": None,
+            "started": time.time(), "finished": None, "eta_seconds": None,
             "stages": [{"name": n, "label": l, "state": "pending", "seconds": None}
-                       for n, l in STAGES if n in stage_names],
+                       for n, l in (s if isinstance(s, tuple) else (s, dict(STAGES).get(s, s)) for s in stage_names)],
         }
+        self._forward = forward  # parent job (one side of a two-sided scan) to report progress to
+        weights = STAGE_WEIGHTS.get(method, STAGE_WEIGHTS["photo"])
+        self._weights = {s["name"]: weights.get(s["name"], 1.0) for s in self.status["stages"]}
         self._stage = None
         self._t0 = None
         self._last_write = 0.0
@@ -132,9 +147,17 @@ class Job:
     def progress(self, fraction: float, message: str = "") -> None:
         names = [s["name"] for s in self.status["stages"]]
         i = names.index(self._stage)
-        self.status["progress"] = (i + min(max(fraction, 0.0), 1.0)) / len(names)
+        total = sum(self._weights.values())
+        before = sum(self._weights[n] for n in names[:i])
+        p = (before + self._weights[self._stage] * min(max(fraction, 0.0), 1.0)) / total
+        self.status["progress"] = p
+        elapsed = time.time() - self.status["started"]
+        # remaining = elapsed time scaled by the work left; only once there is enough to go on
+        self.status["eta_seconds"] = round(elapsed * (1 - p) / p) if p > 0.04 and elapsed > 20 else None
         if message:
             self.status["message"] = message
+        if self._forward:
+            self._forward(p, self.status["message"])
         self.save()
 
     def done(self) -> None:
@@ -145,6 +168,7 @@ class Job:
 
     def finish(self, state: str, error: str | None = None) -> None:
         self.status.update(state=state, error=error, finished=time.time())
+        self.status["eta_seconds"] = None
         if state == "done":
             self.status["progress"], self.status["message"] = 1.0, "Done"
         for s in self.status["stages"]:
@@ -279,11 +303,14 @@ def frame_scale(frame: ModelFrame) -> float:
     return float(np.cbrt(abs(np.linalg.det(frame.M[:3, :3]))))
 
 
-def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = None) -> dict:
+def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = None,
+        bundle: Bundle | None = None, forward=None) -> dict:
     """Run the full pipeline. Returns the report (also written to job_dir/report.json)."""
     options = options or Options()
     job_dir = Path(job_dir).resolve()  # external tools run with their own working directory
-    bundle = load_bundle(Path(bundle_path).resolve())
+    bundle = bundle or load_bundle(Path(bundle_path).resolve())
+    if len(bundle.sides) > 1:
+        return run_sides(bundle, job_dir, options)
     p = plan(bundle, options)
     quality: Quality = QUALITY[p["quality"]]
     photo = p["method"] == "photo"
@@ -297,7 +324,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
     if not options.texture:
         skip.add("texture")
     names = [n for n, _ in STAGES if n not in skip]
-    job = Job(Path(job_dir), names)
+    job = Job(Path(job_dir), names, p["method"], forward)
     work = job.dir / "work"
     work.mkdir(exist_ok=True)
     out = job.dir / "result"
@@ -499,3 +526,60 @@ def _scale_report(frame: ModelFrame, dims_mm: np.ndarray, views: list[View], pho
         "surface_noise_mm": round(noise_mm, 2),
         "expected_error_mm": None if scale_pct is None else round(largest * scale_pct / 100.0 + noise_mm, 2),
     }
+
+
+def _combine_into(job: Job, result_a: Path, result_b: Path, out_dir: Path) -> dict:
+    from .merge import combine
+
+    job.start("combine")
+    rep = combine(result_a, result_b, out_dir, job.log, job.progress)
+    job.done()
+    return rep
+
+
+def run_sides(bundle: Bundle, job_dir: Path, options: Options) -> dict:
+    """A part scanned on both sides (Flip on the phone): each side on its own, then combined."""
+    sides = bundle.sides
+    names = [(f"side{k}", f"Side {i + 1}") for i, k in enumerate(sides)] + ["combine"]
+    job = Job(job_dir, names)
+    report: dict = {"engine": __version__, "capture": bundle.summary(), "options": asdict(options), "sides": []}
+    try:
+        side_opts = Options(**{**asdict(options), "close_bottom": False, "isolate": True})
+        results = []
+        for k in sides:
+            job.start(f"side{k}")
+            sub = run("", job_dir / f"side{k}", side_opts, bundle=bundle.only_side(k), forward=job.progress)
+            report["sides"].append({k2: sub.get(k2) for k2 in ("plan", "alignment", "model", "scale", "photos")})
+            results.append(job_dir / f"side{k}" / "result")
+            job.done()
+        combined = _combine_into(job, results[0], results[1], job_dir)
+        report.update(combined)
+        report["scale"] = report["sides"][0].get("scale")
+        report["plan"] = report["sides"][0].get("plan")
+        report["warnings"] = [] if len(sides) == 2 else [f"{len(sides)} sides scanned: only the first two were combined."]
+        report["seconds"] = round(time.time() - job.status["started"], 1)
+        (job.dir / "report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+        job.finish("done")
+        return report
+    except Exception as e:
+        job.log(traceback.format_exc())
+        job.finish("failed", str(e))
+        raise
+
+
+def run_combine(job_a: Path, job_b: Path, job_dir: Path) -> dict:
+    """Combine two finished jobs (e.g. two separate captures of the two sides of a part)."""
+    job_dir = Path(job_dir).resolve()
+    job = Job(job_dir, ["combine"])
+    try:
+        rep = _combine_into(job, Path(job_a) / "result", Path(job_b) / "result", job_dir)
+        first = json.loads((Path(job_a) / "report.json").read_text(encoding="utf-8"))
+        rep.update(engine=__version__, scale=first.get("scale"), plan=first.get("plan"), warnings=[],
+                   seconds=round(time.time() - job.status["started"], 1))
+        (job.dir / "report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
+        job.finish("done")
+        return rep
+    except Exception as e:
+        job.log(traceback.format_exc())
+        job.finish("failed", str(e))
+        raise

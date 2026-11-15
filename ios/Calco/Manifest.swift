@@ -12,6 +12,12 @@ struct Manifest: Codable {
     var device: DeviceInfo
     var crop_box: CropBox?
     var frames: [FrameRecord]
+    /// One entry per side when the part was turned over during the scan (Flip).
+    var sides: [SideRecord]? = nil
+}
+
+struct SideRecord: Codable {
+    var crop_box: CropBox?
 }
 
 struct DeviceInfo: Codable {
@@ -51,6 +57,8 @@ struct FrameRecord: Codable {
     var tracking: String
     var depth: DepthRecord?
     var exposure: Exposure?
+    /// 0 = as placed, 1 = after the first Flip, ...
+    var side: Int? = nil
 }
 
 enum ScanMode: String, CaseIterable, Identifiable {

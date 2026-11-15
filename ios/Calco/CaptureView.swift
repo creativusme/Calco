@@ -79,6 +79,19 @@ struct CaptureView: View {
                         .background(.ultraThinMaterial, in: Capsule())
                         .animation(.easeInOut(duration: 0.2), value: capture.hint)
                 }
+                if !capture.isRecording, !capture.closeUp, capture.frameCount >= 10, capture.mode != .space {
+                    Button {
+                        capture.flip()
+                    } label: {
+                        Label(capture.side == 0 ? "Flip: scan the other side" : "Flip again: side \(capture.side + 2)",
+                              systemImage: "arrow.triangle.2.circlepath")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .foregroundStyle(.white)
+                    .transition(.opacity)
+                }
                 if capture.mode != .space, !capture.isRecording, !capture.closeUp {
                     sizeControl
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -102,6 +115,9 @@ struct CaptureView: View {
             Spacer()
             HStack(spacing: 10) {
                 Label("\(capture.frameCount)", systemImage: "camera.fill").monospacedDigit()
+                if capture.side > 0 {
+                    Text("Side \(capture.side + 1)").foregroundStyle(Color.calcoAccent)
+                }
                 if capture.mode != .space {
                     CoverageRing(coverage: capture.coverage).frame(width: 26, height: 26)
                     Text("\(capture.coveragePercent)%").monospacedDigit()

@@ -38,6 +38,11 @@ class ExportRequest(BaseModel):
     textured: bool = True
 
 
+class CheckRequest(BaseModel):
+    done: bool | None = None
+    note: str | None = None
+
+
 class CalibrateRequest(BaseModel):
     scale: float  # multiply the model by this factor (measured / shown)
 
@@ -54,7 +59,8 @@ def lan_addresses() -> list[str]:
     return sorted(out)
 
 
-def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=None, net=None) -> FastAPI:
+def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=None, net=None,
+               auto_install: bool = False) -> FastAPI:
     lib = library or Library()
     pairing = Pairing(lib.root)
     if usb is not None:
@@ -113,7 +119,9 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
     def info():
         return {"name": "Calco", "version": __version__, "library": str(lib.root), "port": PORT,
                 "addresses": lan_addresses(), "hostname": socket.gethostname(),
-                "tools": {**tools.status(), "installing": busy["tools"]}, "presets": presets.describe(),
+                "tools": {**tools.status(), "installing": busy["tools"], "install_progress": tools.PROGRESS,
+                          "install_error": busy.get("tools_error")},
+                "presets": presets.describe(),
                 "demo_running": busy["demo"], "phone": phone_status(),
                 "network": net.result if net else {"ok": True, "checked": False}}
 
@@ -136,26 +144,48 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
             raise HTTPException(403, "only on the computer itself")
         return {"pin": pairing.new_pin()}
 
+    @app.get("/api/checklist")
+    def checklist():
+        from .checklist import Checklist, parse
+
+        return {"sections": parse(), "state": Checklist(lib.root).state()}
+
+    @app.post("/api/checklist/{item}")
+    def check(item: str, req: CheckRequest):
+        from .checklist import Checklist
+
+        return Checklist(lib.root).set(item, req.done, req.note)
+
     @app.post("/api/network/recheck")
     def recheck_network():
         if net:
             net.recheck()
         return {"ok": True}
 
-    @app.post("/api/tools/install")
-    def install_tools(what: str = "openmvs"):
-        if busy["tools"]:
-            return {"started": False}
+    def install_missing() -> bool:
+        """Install whatever this computer is missing, in the background. No buttons: it just happens."""
+        if busy["tools"] or not tools.missing():
+            return False
         busy["tools"] = True
+        busy["tools_error"] = None
 
         def work():
             try:
-                (tools.install_colmap if what == "colmap" else tools.install_openmvs)(log=lambda m: None)
+                tools.install_all(log=lambda m: None)
+            except Exception as e:  # shown in the UI; retried at the next start or via the API
+                busy["tools_error"] = str(e)
             finally:
                 busy["tools"] = False
 
         threading.Thread(target=work, daemon=True).start()
-        return {"started": True}
+        return True
+
+    if auto_install:
+        install_missing()
+
+    @app.post("/api/tools/install")
+    def install_tools():
+        return {"started": install_missing()}
 
     @app.get("/api/mat.pdf")
     def mat_pdf(size: str = "A4"):
@@ -262,7 +292,16 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
     def create_job(req: JobRequest):
         if not capture_dir(req.capture_id).exists():
             raise HTTPException(404, "capture not found")
-        if req.options.get("quality", "medium") not in presets.QUALITY:
+        pair = req.options.get("combine")
+        if pair is not None:
+            if not (isinstance(pair, list) and len(pair) == 2 and pair[0] != pair[1]):
+                raise HTTPException(400, "combine needs two different results")
+            for jid in pair:
+                j = lib.get_job(jid) if jid else None
+                if not j or j["state"] != "done" or not j["has_model"]:
+                    raise HTTPException(400, "both results must be finished models")
+            req.options["quality"] = "combine"
+        elif req.options.get("quality", "medium") not in presets.QUALITY:
             raise HTTPException(400, "unknown quality preset")
         return lib.create_job(req.capture_id, req.options)
 
@@ -373,7 +412,7 @@ def serve(host: str = "0.0.0.0", port: int = PORT, library: Path | None = None) 
     from .usb import UsbBridge
 
     lib = Library(library)
-    app = create_app(lib, ui, usb=UsbBridge(lib).start(), net=NetWatch().start())
+    app = create_app(lib, ui, usb=UsbBridge(lib).start(), net=NetWatch().start(), auto_install=True)
     zc = None  # discovery removed: the phone connects with the network code and password
     print(f"Calco engine {__version__} on http://localhost:{port}  (phone: {', '.join(lan_addresses()) or 'no LAN address'})")
     try:

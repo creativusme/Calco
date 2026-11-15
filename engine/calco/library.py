@@ -102,7 +102,8 @@ class Library:
         if job is None:
             return None
         status = self._read(d / "status.json") or {}
-        job.update({k: status.get(k) for k in ("progress", "message", "error", "stages", "started", "finished")})
+        job.update({k: status.get(k) for k in ("progress", "message", "error", "stages", "started", "finished",
+                                               "eta_seconds")})
         if job["state"] == "running" and status.get("state") in ("done", "failed"):
             job["state"] = status["state"]
         job["report"] = self._read(d / "report.json") if job["state"] == "done" else None
@@ -171,8 +172,13 @@ class Library:
             with self._lock:
                 self.set_state(job["id"], "running")
                 self._running = job["id"]
-                cmd = [sys.executable, "-m", "calco", "process", str(self.capture_path(job["capture_id"])),
-                       "--job-dir", str(d), "--options", json.dumps(job["options"])]
+                pair = job["options"].get("combine")
+                if pair:  # two finished results of the same part, aligned and fused
+                    cmd = [sys.executable, "-m", "calco", "combine", str(self.job_dir(pair[0])), str(self.job_dir(pair[1])),
+                           "--job-dir", str(d)]
+                else:
+                    cmd = [sys.executable, "-m", "calco", "process", str(self.capture_path(job["capture_id"])),
+                           "--job-dir", str(d), "--options", json.dumps(job["options"])]
                 with (d / "process.log").open("w", encoding="utf-8") as fh:
                     self._proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
             code = self._proc.wait()
