@@ -307,7 +307,11 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
             res = [np.linalg.norm(img.projection_center() - by_name[img.name].center)
                    for img in rec.images.values() if img.has_pose and img.name in by_name]
             pose_rms = float(np.sqrt(np.mean(np.square(res))) * 1000.0)
-            log(f"Phone poses vs photogrammetry: {pose_rms:.1f} mm RMS")
+            if pose_rms < 0.05:  # the phone poses were kept fixed: there is nothing to compare
+                log("Phone poses kept fixed")
+                pose_rms = None
+            else:
+                log(f"Phone poses vs photogrammetry: {pose_rms:.1f} mm RMS")
 
     model_dir = sfm_dir / "aligned"
     model_dir.mkdir()
