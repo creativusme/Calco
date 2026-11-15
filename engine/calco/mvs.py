@@ -55,7 +55,7 @@ def _limit_views(dense_dir: Path, quality: Quality, score: dict | None, log) -> 
     return len(chosen)
 
 
-def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress, score=None) -> Path:
+def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress, score=None, geometric: bool = True) -> Path:
     exe = tools.colmap_bin()
     progress(0.03, "Computing depth maps (GPU)")
     n_views = max(1, _limit_views(dense_dir, quality, score, log))
@@ -64,7 +64,7 @@ def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress, scor
     def views(line: str) -> None:  # two passes over all photos: photometric, then geometric
         if "Processing view" in line:
             seen[0] += 1
-            done = min(seen[0] / (2 * n_views), 1.0)
+            done = min(seen[0] / ((2 if geometric else 1) * n_views), 1.0)
             progress(0.03 + 0.66 * done, f"Computing depth maps (GPU) {round(done * 100)}%")
 
     # window_step 2 evaluates every other pixel of the matching window: about twice as fast,
@@ -73,10 +73,12 @@ def _dense_gpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress, scor
                    "--PatchMatchStereo.max_image_size", quality.dense_size,
                    "--PatchMatchStereo.num_iterations", quality.dense_iterations,
                    "--PatchMatchStereo.window_step", 2,
-                   "--PatchMatchStereo.geom_consistency", 1, "--PatchMatchStereo.cache_size", 16], dense_dir, log,
-             on_line=views)
+                   "--PatchMatchStereo.geom_consistency", int(geometric), "--PatchMatchStereo.cache_size", 16,
+                   # a photo whose first-pass depth map is missing must not abort the whole run
+                   "--PatchMatchStereo.allow_missing_files", 1], dense_dir, log, on_line=views)
     progress(0.7, "Fusing depth maps")
     run_tool(exe, ["stereo_fusion", "--workspace_path", dense_dir, "--output_path", dense_dir / "fused.ply",
+                   "--input_type", "geometric" if geometric else "photometric",
                    "--StereoFusion.max_image_size", quality.dense_size], dense_dir, log)
     if not (dense_dir / "fused.ply").exists():
         raise RuntimeError("COLMAP produced no dense points")
@@ -116,7 +118,12 @@ def dense_mesh(dense_dir: Path, work: Path, quality: Quality, log=print, progres
         try:
             mesh, computed_on = _dense_gpu(dense_dir, mvs, quality, log, progress, score), "gpu"
         except RuntimeError as e:
-            log(f"GPU dense reconstruction failed, using the CPU instead: {e}")
+            # the CPU path can take hours on a big capture: first try the GPU once more, single pass
+            log(f"GPU dense reconstruction failed ({e}); retrying on the GPU without the second pass")
+            try:
+                mesh, computed_on = _dense_gpu(dense_dir, mvs, quality, log, progress, score, geometric=False), "gpu"
+            except RuntimeError as e2:
+                log(f"GPU dense reconstruction failed again, using the CPU instead: {e2}")
     if mesh is None:
         mesh = _dense_cpu(dense_dir, mvs, quality, log, progress)
 
