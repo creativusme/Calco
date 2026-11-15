@@ -91,7 +91,7 @@ def test_exports(draft_job):
     import trimesh
 
     job, report = draft_job
-    for fmt in ("glb", "obj", "stl", "3mf", "ply"):
+    for fmt in ("glb", "obj", "stl", "3mf", "ply", "usdz"):
         path = export_model(job / "result", job / "exports", "part", fmt)
         assert path.exists() and path.stat().st_size > 1000
     stl = trimesh.load(job / "exports" / "part.stl")
@@ -99,6 +99,11 @@ def test_exports(draft_job):
     assert abs(stl.bounds[0][2]) < 0.05  # sits on z = 0
     obj = trimesh.load(job / "exports" / "part.obj", force="mesh")
     assert abs(obj.extents[1] * 1000 - report["model"]["dimensions_mm"][2]) < 0.05  # metres, Y up
+
+    import zipfile
+
+    usdz = zipfile.ZipFile(job / "exports" / "part.usdz").namelist()
+    assert usdz[0].endswith(".usdc") and any(n.endswith("texture.jpg") for n in usdz)  # layer first, texture inside
 
     # DXF sections in millimetres: horizontal slices plus the two middle sections
     dxf = export_model(job / "result", job / "exports", "part", "dxf").read_text().split("\n")

@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Capture, type ChecklistData, type ExportResult, type Info, type Job } from "./api";
 import type * as THREE from "three";
 import { Viewer, circleThrough, type ViewMode } from "./Viewer";
+import type { Fit } from "./fit";
+
+type MeasureKind = "distance" | "diameter" | "cylinder" | "plane";
+const PICKS: Record<MeasureKind, number> = { distance: 2, diameter: 3, cylinder: 1, plane: 1 };
 
 const NBSP = " ";
 const fmtTime = (s: number) => (s < 90 ? `${Math.round(s)}${NBSP}s` : s < 5400 ? `${Math.round(s / 60)}${NBSP}min` : `${(s / 3600).toFixed(1)}${NBSP}h`);
@@ -316,7 +320,8 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
   const [grid, setGrid] = useState(true);
   const [measuring, setMeasuring] = useState(false);
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
-  const [picks, setPicks] = useState(2); // 2 = distance, 3 = diameter of a circle through 3 points
+  const [kind, setKind] = useState<MeasureKind>("distance");
+  const [fit, setFit] = useState<Fit | null | undefined>(undefined); // undefined = nothing clicked yet
   const [showLog, setShowLog] = useState(false);
   const hasModel = !!job?.has_model && job.state === "done";
   // results processed without colour texture are plain white: show them as clay, no Texture button
@@ -331,7 +336,7 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
     if (lastState.current && lastState.current !== "done" && job?.state === "done") setTab("result");
     lastState.current = job?.state;
   }, [job?.state]);
-  useEffect(() => { setMeasuring(false); setPoints([]); }, [job?.id]);
+  useEffect(() => { setMeasuring(false); setPoints([]); setFit(undefined); }, [job?.id]);
 
   const remove = async () => {
     if (!confirm(`Delete “${capture.name}” with its photos and all results? This cannot be undone.`)) return;
@@ -383,17 +388,18 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
         <div className="viewport">
           {hasModel && job ? (
             <>
-              <Viewer url={api.modelUrl(job)} splatUrl={hasSplat ? api.splatUrl(job) : null} mode={view} grid={grid} theme={theme} measuring={measuring} picks={picks} onMeasure={setPoints} />
+              <Viewer url={api.modelUrl(job)} splatUrl={hasSplat ? api.splatUrl(job) : null} mode={view} grid={grid} theme={theme} measuring={measuring} picks={PICKS[kind]} onMeasure={setPoints}
+                fitKind={kind === "cylinder" || kind === "plane" ? kind : null} onFit={setFit} />
               <div className="toolbar" role="toolbar" aria-label="View">
                 {([...(hasSplat ? ["splat"] : []), ...(coloured ? ["textured"] : []), "clay", "wire"] as ViewMode[]).map((m) => (
                   <button key={m} aria-pressed={view === m} onClick={() => setMode(m)}>{{ splat: "Splat", textured: "Texture", clay: "Clay", wire: "Wire" }[m]}</button>
                 ))}
                 <span className="sep" aria-hidden="true" />
                 <button aria-pressed={grid} onClick={() => setGrid(!grid)}>Grid</button>
-                <button aria-pressed={measuring} onClick={() => { setMeasuring(!measuring); setPoints([]); }}>Measure</button>
+                <button aria-pressed={measuring} onClick={() => { setMeasuring(!measuring); setPoints([]); setFit(undefined); }}>Measure</button>
               </div>
               {measuring
-                ? <MeasureBar job={job} points={points} picks={picks} setPicks={(n) => { setPicks(n); setPoints([]); }} refresh={refresh} />
+                ? <MeasureBar job={job} points={points} kind={kind} fit={fit} setKind={(k) => { setKind(k); setPoints([]); setFit(undefined); }} refresh={refresh} />
                 : job.report && <Dimensions job={job} />}
             </>
           ) : (
@@ -437,13 +443,18 @@ function Dimensions({ job }: { job: Job }) {
 }
 
 /** Two-point measure: shows the distance and can calibrate the model from a known length. */
-function MeasureBar({ job, points, picks, setPicks, refresh }: {
-  job: Job; points: THREE.Vector3[]; picks: number; setPicks: (n: number) => void; refresh: () => void;
+function MeasureBar({ job, points, kind, fit, setKind, refresh }: {
+  job: Job; points: THREE.Vector3[]; kind: MeasureKind; fit: Fit | null | undefined; setKind: (k: MeasureKind) => void; refresh: () => void;
 }) {
   const [real, setReal] = useState("");
-  const circle = picks === 3 && points.length === 3 ? circleThrough(points[0], points[1], points[2]) : null;
+  const circle = kind === "diameter" && points.length === 3 ? circleThrough(points[0], points[1], points[2]) : null;
+  const cyl = kind === "cylinder" && fit?.kind === "cylinder" ? fit : null;
+  const plane = kind === "plane" && fit?.kind === "plane" ? fit : null;
   // millimetres before calibration: a distance, or a diameter
-  const raw = picks === 2 && points.length === 2 ? points[0].distanceTo(points[1]) * 1000 : circle ? circle.radius * 2000 : null;
+  const raw = kind === "distance" && points.length === 2 ? points[0].distanceTo(points[1]) * 1000
+    : circle ? circle.radius * 2000 : cyl ? cyl.radius * 2000 : null;
+  const hint = { distance: "Click two points on the model", diameter: "Click three points on the edge of a hole or shaft",
+    cylinder: "Click on the side of a shaft or inside a hole", plane: "Click on a flat face" }[kind];
   const apply = async () => {
     const m = Number(real.replace(",", "."));
     if (!(m > 0) || !raw) return;
@@ -454,14 +465,20 @@ function MeasureBar({ job, points, picks, setPicks, refresh }: {
   return (
     <div className="readout readout-measure">
       <span className="segmented" role="group" aria-label="Measure">
-        <button aria-pressed={picks === 2} onClick={() => setPicks(2)}>Distance</button>
-        <button aria-pressed={picks === 3} onClick={() => setPicks(3)}>Diameter</button>
+        {(["distance", "diameter", "cylinder", "plane"] as MeasureKind[]).map((k) => (
+          <button key={k} aria-pressed={kind === k} onClick={() => setKind(k)}>{k[0].toUpperCase() + k.slice(1)}</button>
+        ))}
       </span>
-      {raw == null ? (
-        <span className="muted">{picks === 2 ? "Click two points on the model" : "Click three points on the edge of a hole or shaft"}</span>
+      {plane ? (
+        <span><i>Flatness</i>{fmtMm(plane.rms * 1000 * job.user_scale)} RMS · <i>Tilt</i>{plane.tiltDeg.toFixed(1)}°</span>
+      ) : fit === null ? (
+        <span className="muted">No clear {kind} there: click closer to its middle</span>
+      ) : raw == null ? (
+        <span className="muted">{hint}</span>
       ) : (
         <>
-          <span><i>{picks === 2 ? "Distance" : "Diameter"}</i>{fmtMm(raw * job.user_scale)}</span>
+          <span><i>{kind === "distance" ? "Distance" : "Diameter"}</i>{fmtMm(raw * job.user_scale)}
+            {cyl && <span className="muted"> · fit ±{(cyl.rms * 1000 * job.user_scale).toFixed(2)}</span>}</span>
           <label className="inline-field">
             <span className="muted">Real length</span>
             <input name="real-length" autoComplete="off" inputMode="decimal" placeholder="mm…" value={real} onChange={(e) => setReal(e.target.value)}

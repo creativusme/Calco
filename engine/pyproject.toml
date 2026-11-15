@@ -18,7 +18,8 @@ dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "zeroconf",
-  "uv",  # fetches the Python + PyTorch of the surfel engine (tools.install_splat)
+  "uv",  # fetches the Python + PyTorch of the splat engine (tools.install_splat)
+  "usd-core",  # USDZ export (Pixar USD, TOST licence)
 ]
 
 [project.optional-dependencies]

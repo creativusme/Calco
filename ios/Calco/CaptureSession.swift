@@ -217,11 +217,17 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     /// Finish the scan. Returns false (and deletes the bundle) when there are too few photos.
     func finish(completion: @escaping (Bool) -> Void) {
         isRecording = false
+        // the LiDAR mesh ARKit built while scanning: a 3D preview on the phone (copied now, written below)
+        let meshes = (session.currentFrame?.anchors ?? []).compactMap { $0 as? ARMeshAnchor }.map(MeshCopy.init)
+        let box = cropBox ?? sideBoxes[0]
         ioQueue.async { [self] in
             let ok = records.count >= 3
             if ok {
                 writeManifest()
                 writePreview()
+                if !meshes.isEmpty {
+                    MeshCopy.writeOBJ(meshes, box: box, to: bundleURL.appendingPathComponent("preview.obj"))
+                }
                 try? FileManager.default.removeItem(at: bundleURL.appendingPathComponent(".recording"))
             } else {
                 try? FileManager.default.removeItem(at: bundleURL)

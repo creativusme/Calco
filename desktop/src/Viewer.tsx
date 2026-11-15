@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { fitCylinder, fitPlane, surfaceOf, type Fit, type Surface } from "./fit";
 
 export type ViewMode = "textured" | "clay" | "wire" | "splat";
 
@@ -16,6 +17,9 @@ interface Props {
   measuring: boolean;
   picks?: number;
   onMeasure: (points: THREE.Vector3[]) => void;
+  /** Instead of points: fit a cylinder or a plane to the surface around one click. */
+  fitKind?: "cylinder" | "plane" | null;
+  onFit?: (fit: Fit | null) => void;
 }
 
 interface Scene {
@@ -34,13 +38,15 @@ interface Scene {
 }
 
 /** three.js viewport: orbit, textured / clay / wireframe, ground grid in real units, two-point measure. */
-export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2, onMeasure }: Props) {
+export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2, onMeasure, fitKind = null, onFit }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const state = useRef<Scene | null>(null);
   const measuringRef = useRef(measuring);
   const onMeasureRef = useRef(onMeasure);
   const picksRef = useRef(picks);
   picksRef.current = picks;
+  const fitRef = useRef({ kind: fitKind, onFit });
+  fitRef.current = { kind: fitKind, onFit };
   measuringRef.current = measuring;
   onMeasureRef.current = onMeasure;
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -98,6 +104,18 @@ export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2,
       ray.setFromCamera(ndc, camera);
       const hit = ray.intersectObject(s.model, true)[0];
       if (!hit) return;
+      const { kind, onFit: report } = fitRef.current;
+      if (kind) {
+        const surface: Surface = s.model.userData.surface ??= surfaceOf(s.model);
+        const r = s.model.userData.radius as number;
+        const n = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
+        const fit = kind === "cylinder" ? fitCylinder(surface, hit.point, 0.03 * r)
+          : fitPlane(surface, hit.point, n, 0.06 * r, new THREE.Vector3(0, 1, 0));
+        s.points = [];
+        drawMarks(s, fit);
+        report?.(fit);
+        return;
+      }
       if (s.points.length >= picksRef.current) s.points = [];
       s.points.push(hit.point.clone());
       drawMarks(s);
@@ -208,7 +226,7 @@ export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2,
     if (!s) return;
     s.points = [];
     drawMarks(s);
-  }, [measuring, picks]);
+  }, [measuring, picks, fitKind]);
 
   return (
     <div className={`viewer ${measuring ? "is-measuring" : ""}`} ref={host}>
@@ -219,8 +237,35 @@ export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2,
 }
 
 /** Draw the picked points and the line between them, always on top of the model. */
-function drawMarks(s: Scene) {
+function drawMarks(s: Scene, fit: Fit | null = null) {
   s.marks.clear();
+  if (fit) {
+    const lime = new THREE.LineBasicMaterial({ color: 0xd2f24a, depthTest: false });
+    const loop = (c: THREE.Vector3, n: THREE.Vector3, r: number, square = false) => {
+      const u = new THREE.Vector3(1, 0, 0);
+      if (Math.abs(u.dot(n)) > 0.9) u.set(0, 1, 0);
+      u.sub(n.clone().multiplyScalar(u.dot(n))).normalize();
+      const v = n.clone().cross(u);
+      const pts = square
+        ? [[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]].map(([a, b]) => c.clone().addScaledVector(u, a * r).addScaledVector(v, b * r))
+        : Array.from({ length: 65 }, (_, i) => { const t = (i / 64) * Math.PI * 2; return c.clone().addScaledVector(u, Math.cos(t) * r).addScaledVector(v, Math.sin(t) * r); });
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lime);
+      line.renderOrder = 10;
+      s.marks.add(line);
+    };
+    if (fit.kind === "cylinder") {
+      const half = fit.axis.clone().multiplyScalar(Math.max(fit.length, fit.radius) / 2);
+      loop(fit.centre.clone().add(half), fit.axis, fit.radius);
+      loop(fit.centre.clone().sub(half), fit.axis, fit.radius);
+      const axisLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([fit.centre.clone().add(half), fit.centre.clone().sub(half)]), lime);
+      axisLine.renderOrder = 10;
+      s.marks.add(axisLine);
+    } else {
+      loop(fit.centre, fit.normal, fit.size, true);
+    }
+    s.render();
+    return;
+  }
   const r = ((s.model?.userData.radius as number) ?? 0.1) * 0.012;
   const material = new THREE.MeshBasicMaterial({ color: 0xd2f24a, depthTest: false });
   for (const p of s.points) {

@@ -11,8 +11,8 @@ from .presets import EXPORT_FORMATS, UNIT_SCALE
 
 Y_UP_TO_Z_UP = np.array([[1.0, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
 # formats whose users expect +Y up (DCC tools); the others are written +Z up (CAD, slicers)
-Y_UP_FORMATS = {"glb", "obj"}
-DEFAULT_UNITS = {"glb": "m", "obj": "m", "ply": "m", "stl": "mm", "3mf": "mm", "dxf": "mm"}
+Y_UP_FORMATS = {"glb", "obj", "usdz"}
+DEFAULT_UNITS = {"glb": "m", "obj": "m", "ply": "m", "stl": "mm", "3mf": "mm", "dxf": "mm", "usdz": "m"}
 
 
 def load_model(result_dir: Path) -> trimesh.Trimesh:
@@ -28,8 +28,8 @@ def export_model(result_dir: Path, out_dir: Path, name: str, fmt: str, units: st
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unsupported format {fmt!r}. Supported: {', '.join(EXPORT_FORMATS)}")
     units = units or DEFAULT_UNITS[fmt]
-    if fmt == "glb":
-        units = "m"  # glTF is metres by specification
+    if fmt in ("glb", "usdz"):
+        units = "m"  # glTF is metres by specification; USDZ is written in metres for AR Quick Look
     mesh = load_model(result_dir)
     mesh.apply_scale(UNIT_SCALE[units] * user_scale)
     if fmt in Y_UP_FORMATS:
@@ -37,7 +37,9 @@ def export_model(result_dir: Path, out_dir: Path, name: str, fmt: str, units: st
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{name}.{fmt}"
-    if fmt == "dxf":
+    if fmt == "usdz":
+        write_usdz(mesh, path, textured)
+    elif fmt == "dxf":
         path = out_dir / f"{name}-sections.dxf"
         write_sections_dxf(trimesh.Trimesh(mesh.vertices, mesh.faces, process=False), path, units)
     elif fmt == "ply":
@@ -87,4 +89,63 @@ def write_sections_dxf(mesh: trimesh.Trimesh, path: Path, units: str = "mm") -> 
                     "11", f"{q[a]:.4f}", "21", f"{q[b]:.4f}", "31", "0"]
     out += ["0", "ENDSEC", "0", "EOF"]
     path.write_text("\n".join(out) + "\n", encoding="ascii")
+    return path
+
+
+def write_usdz(mesh: trimesh.Trimesh, path: Path, textured: bool = True) -> Path:
+    """USDZ for Apple AR Quick Look and Reality tools: Y up, metres, one mesh, optional photo texture."""
+    import shutil
+    import tempfile
+
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, UsdUtils, Vt
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        stage_path = tmp / "model.usdc"
+        stage = Usd.Stage.CreateNew(str(stage_path))
+        UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+        UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        root = UsdGeom.Xform.Define(stage, "/Model")
+        stage.SetDefaultPrim(root.GetPrim())
+        geo = UsdGeom.Mesh.Define(stage, "/Model/Scan")
+        geo.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(np.asarray(mesh.vertices, np.float32)))
+        geo.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(mesh.faces), 3, np.int32)))
+        geo.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(np.asarray(mesh.faces, np.int32).reshape(-1)))
+        geo.CreateNormalsAttr(Vt.Vec3fArray.FromNumpy(np.asarray(mesh.vertex_normals, np.float32)))
+        geo.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+        geo.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+        lo, hi = mesh.bounds
+        geo.CreateExtentAttr([Gf.Vec3f(*map(float, lo)), Gf.Vec3f(*map(float, hi))])
+
+        material = UsdShade.Material.Define(stage, "/Model/Material")
+        shader = UsdShade.Shader.Define(stage, "/Model/Material/Surface")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
+        shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
+        image = getattr(mesh.visual.material, "baseColorTexture", None) or getattr(mesh.visual.material, "image", None) \
+            if textured and hasattr(mesh.visual, "uv") and mesh.visual.uv is not None else None
+        if image is not None:
+            image.convert("RGB").save(tmp / "texture.jpg", quality=92)
+            st = UsdGeom.PrimvarsAPI(geo).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+            st.Set(Vt.Vec2fArray.FromNumpy(np.asarray(mesh.visual.uv, np.float32)))
+            reader = UsdShade.Shader.Define(stage, "/Model/Material/StReader")
+            reader.CreateIdAttr("UsdPrimvarReader_float2")
+            reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+            tex = UsdShade.Shader.Define(stage, "/Model/Material/Texture")
+            tex.CreateIdAttr("UsdUVTexture")
+            tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set("texture.jpg")
+            tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(reader.ConnectableAPI(), "result")
+            tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(tex.ConnectableAPI(), "rgb")
+        else:
+            shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.64, 0.65, 0.67))
+        material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+        UsdShade.MaterialBindingAPI.Apply(geo.GetPrim()).Bind(material)
+        stage.GetRootLayer().Save()
+        if path.exists():
+            path.unlink()
+        if not UsdUtils.CreateNewARKitUsdzPackage(str(stage_path), str(path)):
+            raise RuntimeError("USDZ packaging failed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return path

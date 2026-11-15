@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var selecting = false
     @State private var selection = Set<String>()
     @State private var confirmDelete: Set<String>?
+    @State private var previewing: CaptureSummary?
 
     var body: some View {
         NavigationStack {
@@ -56,6 +57,7 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showSettings) { SettingsView(uploader: uploader, server: server, store: store) }
+        .sheet(item: $previewing) { MeshPreviewView(capture: $0) }
         .alert("Rename scan", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Save") { if let r = renaming, !newName.isEmpty { store.rename(r, to: newName) } }
@@ -87,12 +89,14 @@ struct LibraryView: View {
                             Task { await uploader.send(capture, store: store) }
                         }
                         .tag(capture.id)
+                        .onTapGesture { if !selecting { previewing = capture } }
                         .swipeActions {
                             Button("Delete", role: .destructive) { confirmDelete = [capture.id] }
                             Button("Rename") { newName = capture.name; renaming = capture }
                         }
                         .contextMenu {
                             Button("Rename", systemImage: "pencil") { newName = capture.name; renaming = capture }
+                            Button("3D preview", systemImage: "cube") { previewing = capture }
                             Button("Send to computer", systemImage: "arrow.up.circle") { Task { await uploader.send(capture, store: store) } }
                             Button("Delete", systemImage: "trash", role: .destructive) { confirmDelete = [capture.id] }
                         }

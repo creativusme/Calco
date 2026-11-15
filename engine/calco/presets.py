@@ -59,12 +59,12 @@ PROFILES = {
         ExportProfile("blender", "Blender / render", "Textured mesh in metres.", ("glb", "obj"), "m", True),
         ExportProfile("cad", "CAD (Fusion)", "Mesh in millimetres plus DXF cross-sections to sketch on.",
                       ("obj", "stl", "dxf"), "mm", False),
-        ExportProfile("web", "Web / AR", "Single-file GLB.", ("glb",), "m", True),
+        ExportProfile("web", "Web / AR", "Single-file GLB, and USDZ for iPhone AR.", ("glb", "usdz"), "m", True),
         ExportProfile("points", "Point cloud", "Coloured vertices as PLY.", ("ply",), "m", False),
     )
 }
 
-EXPORT_FORMATS = ("glb", "obj", "stl", "3mf", "ply", "dxf")
+EXPORT_FORMATS = ("glb", "obj", "stl", "3mf", "ply", "dxf", "usdz")
 UNIT_SCALE = {"m": 1.0, "cm": 100.0, "mm": 1000.0}
 
 
