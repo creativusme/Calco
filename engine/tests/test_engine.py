@@ -368,3 +368,64 @@ def test_scale_markers():
         projections.append(P @ np.linalg.inv(S))
     fit = fit_markers(obs, projections)
     assert fit.markers == 3 and abs(fit.scale - 0.7) < 0.7 * 0.003
+
+
+def test_dense_photos_cropped_to_the_part(tmp_path):
+    """crop_to_box keeps the model consistent and cuts the photos down to the part on the table."""
+    import cv2
+    import pycolmap
+    from scipy.spatial.transform import Rotation
+
+    from calco.bundle import CropBox
+    from calco.mvs import crop_to_box
+
+    rng = np.random.default_rng(0)
+    table = np.c_[rng.uniform(-0.5, 0.5, 3000), np.zeros(3000), rng.uniform(-0.5, 0.5, 3000)]
+    part = np.c_[rng.uniform(-0.05, 0.05, 1500), rng.uniform(0.0, 0.06, 1500), rng.uniform(-0.04, 0.04, 1500)]
+    pts = np.vstack([table, part])
+    W, H, f = 1600, 1200, 1300.0
+    (tmp_path / "sparse").mkdir()
+    (tmp_path / "images").mkdir()
+    cams, imgs, tracks = [], [], {i: [] for i in range(len(pts))}
+    for k in range(6):
+        a = 2 * np.pi * k / 6
+        eye = np.array([0.45 * np.cos(a), 0.35, 0.45 * np.sin(a)])
+        fwd = -eye / np.linalg.norm(eye)
+        right = np.cross(fwd, [0, 1.0, 0]); right /= np.linalg.norm(right)
+        R = np.stack([right, np.cross(fwd, right), fwd])
+        t = -R @ eye
+        cam = pts @ R.T + t
+        uv = cam[:, :2] / cam[:, 2:] * f + [W / 2, H / 2]
+        ok = (cam[:, 2] > 0) & (uv[:, 0] >= 0) & (uv[:, 0] < W) & (uv[:, 1] >= 0) & (uv[:, 1] < H)
+        obs = []
+        for i in np.flatnonzero(ok):
+            tracks[i].append((k + 1, len(obs)))
+            obs.append(f"{uv[i, 0]} {uv[i, 1]} {i + 1}")
+        q = Rotation.from_matrix(R).as_quat()
+        cams.append(f"{k + 1} PINHOLE {W} {H} {f} {f} {W / 2} {H / 2}")
+        imgs.append(f"{k + 1} {q[3]} {q[0]} {q[1]} {q[2]} {t[0]} {t[1]} {t[2]} {k + 1} {k:02d}.jpg\n" + " ".join(obs))
+        cv2.imwrite(str(tmp_path / "images" / f"{k:02d}.jpg"), np.full((H, W, 3), 128, np.uint8))
+    (tmp_path / "sparse" / "cameras.txt").write_text("\n".join(cams) + "\n")
+    (tmp_path / "sparse" / "images.txt").write_text("\n".join(imgs) + "\n")
+    (tmp_path / "sparse" / "points3D.txt").write_text("\n".join(
+        f"{i + 1} {p[0]} {p[1]} {p[2]} 128 128 128 0.5 " + " ".join(f"{a} {b}" for a, b in tracks[i])
+        for i, p in enumerate(pts) if len(tracks[i]) >= 2) + "\n")
+
+    box = CropBox(np.array([0, 0.3, 0.0]), np.full(3, 0.9))  # placed big and high, as people do on the phone
+    assert crop_to_box(tmp_path, box, log=lambda m: None) == 6
+    rec = pycolmap.Reconstruction(tmp_path / "sparse")
+    errs = []
+    for p in list(rec.points3D.values())[:500]:
+        for e in p.track.elements:
+            img = rec.images[e.image_id]
+            uv = rec.cameras[img.camera_id].img_from_cam(img.cam_from_world() * p.xyz)
+            errs.append(np.linalg.norm(uv - img.points2D[e.point2D_idx].xy))
+    assert np.max(errs) < 1e-3  # the shifted cameras still see every point where it was observed
+    for img in rec.images.values():
+        cam = rec.cameras[img.camera_id]
+        assert cam.width * cam.height < 0.5 * W * H  # the table was cut away
+        assert cv2.imread(str(tmp_path / "images" / img.name)).shape[:2] == (cam.height, cam.width)
+        # every part point is still inside the cropped photo
+        for p in part[::50]:
+            u, v = cam.img_from_cam(img.cam_from_world() * p)
+            assert 0 <= u < cam.width and 0 <= v < cam.height

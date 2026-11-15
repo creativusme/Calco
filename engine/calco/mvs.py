@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from . import tools
 from .presets import Quality
 from .tools import openmvs_bin, run_tool
@@ -25,6 +27,105 @@ def _mvs(name: str, args: list, cwd: Path, log) -> None:
 def _scene(dense_dir: Path, mvs: Path, log) -> None:
     """Cameras and photos in OpenMVS format (needed for refinement and texturing)."""
     _mvs("InterfaceCOLMAP", ["-i", dense_dir, "-o", mvs / "scene.mvs", "--image-folder", dense_dir / "images"], mvs, log)
+
+
+def _part_box(rec, box, log):
+    """The part inside the crop box: sparse points above the support plane, robust extent.
+
+    Boxes placed on the phone are often much bigger than the part; the support plane (the
+    densest horizontal plane among the points) tells the part from the table it stands on.
+    """
+    from .geom import fit_plane_ransac
+
+    xyz = np.array([p.xyz for p in rec.points3D.values()])
+    xyz = xyz[box.contains(xyz)]
+    if len(xyz) < 500:
+        return box
+    plane = fit_plane_ransac(xyz, 0.004, prefer_normal=np.array([0, 1.0, 0]), max_angle_deg=20)
+    if plane is None:
+        return box
+    n, d, _ = plane
+    if n[1] < 0:
+        n, d = -n, -d
+    part = xyz[xyz @ n + d > 0.006]
+    if len(part) < 200:
+        return box
+    c, s = np.cos(box.yaw), np.sin(box.yaw)
+    rot = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])  # box axes in the world
+    from scipy.spatial import cKDTree
+
+    # the full extent of the points that have neighbours (edges of a part are sparse, so no percentiles)
+    k = cKDTree(part).query(part, k=min(9, len(part)))[0][:, -1]
+    part = part[k < 3 * np.median(k)]
+    local = (part - box.center) @ rot
+    lo, hi = local.min(0) - 0.02, local.max(0) + 0.02
+    lo[1] = min(lo[1], float(((-d * n) - box.center) @ rot[:, 1]))  # down to the support
+    size = np.minimum(hi - lo, box.size)
+    centre = box.center + rot @ ((lo + hi) / 2)
+    tight = box.__class__(centre, size, box.yaw)
+    if np.prod(size) < 0.8 * np.prod(box.size):
+        log("Part inside the crop box: " + " x ".join(f"{v * 1000:.0f}" for v in size) + " mm")
+    return tight
+
+
+def crop_to_box(dense_dir: Path, box, log, margin: float = 0.15, min_gain: float = 0.8) -> int:
+    """Crop every undistorted photo to where the region of interest projects, in place.
+
+    Patch-match time grows with the pixels and its size limit applies to the whole photo, so
+    the background costs time and steals resolution from the part. After cropping, the same
+    pixel budget lands on the object. Each photo gets its own pinhole camera (shifted principal
+    point); the model is rewritten in COLMAP's text format. Returns the number of photos cropped.
+    """
+    import cv2
+    import pycolmap
+
+    def g(v) -> str:  # plain decimal text (numpy scalars would print as np.float64(...))
+        return f"{float(v):.17g}"
+
+    rec = pycolmap.Reconstruction(dense_dir / "sparse")
+    box = _part_box(rec, box, log)
+    big = box.__class__(box.center, box.size * (1 + 2 * margin), box.yaw)
+    corners = np.c_[big.corners(), np.ones(8)]
+    cams, imgs, cropped, saved = [], [], 0, 0.0
+    for img in sorted(rec.images.values(), key=lambda i: i.image_id):
+        cam = rec.cameras[img.camera_id]
+        fx, fy, cx, cy = (float(v) for v in cam.params[:4])
+        w, h = cam.width, cam.height
+        E = img.cam_from_world().matrix()
+        z = (corners @ E.T)[:, 2]
+        x0, y0, x1, y1 = 0, 0, w, h
+        if np.all(z > 1e-3):  # the whole box in front of the camera: crop to its outline
+            uv = (corners @ E.T)[:, :2] / z[:, None] * [fx, fy] + [cx, cy]
+            x0, y0 = max(0, int(np.floor(uv[:, 0].min()))), max(0, int(np.floor(uv[:, 1].min())))
+            x1, y1 = min(w, int(np.ceil(uv[:, 0].max()))), min(h, int(np.ceil(uv[:, 1].max())))
+            if x1 - x0 < 64 or y1 - y0 < 64 or (x1 - x0) * (y1 - y0) > min_gain * w * h:
+                x0, y0, x1, y1 = 0, 0, w, h  # box not seen, or too little to gain
+        if (x0, y0, x1, y1) != (0, 0, w, h):
+            path = dense_dir / "images" / img.name
+            im = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+            cv2.imwrite(str(path), im[y0:y1, x0:x1], [cv2.IMWRITE_JPEG_QUALITY, 95])
+            cropped += 1
+            saved += 1 - (x1 - x0) * (y1 - y0) / (w * h)
+        cams.append(f"{img.image_id} PINHOLE {x1 - x0} {y1 - y0} {g(fx)} {g(fy)} {g(cx - x0)} {g(cy - y0)}")
+        q = img.cam_from_world().rotation.quat  # x, y, z, w
+        t = img.cam_from_world().translation
+        pts = " ".join(f"{g(p.xy[0] - x0)} {g(p.xy[1] - y0)} {p.point3D_id if p.has_point3D() else -1}"
+                       for p in img.points2D)
+        imgs.append(f"{img.image_id} {g(q[3])} {g(q[0])} {g(q[1])} {g(q[2])} {g(t[0])} {g(t[1])} {g(t[2])} "
+                    f"{img.image_id} {img.name}\n{pts}")
+    sparse = dense_dir / "sparse"
+    points = [f"{pid} {g(p.xyz[0])} {g(p.xyz[1])} {g(p.xyz[2])} {p.color[0]} {p.color[1]} {p.color[2]} {g(p.error)} "
+              + " ".join(f"{e.image_id} {e.point2D_idx}" for e in p.track.elements)
+              for pid, p in rec.points3D.items()]
+    for old in sparse.glob("*.bin"):
+        old.unlink()
+    (sparse / "cameras.txt").write_text("\n".join(cams) + "\n", encoding="utf-8")
+    (sparse / "images.txt").write_text("\n".join(imgs) + "\n", encoding="utf-8")
+    (sparse / "points3D.txt").write_text("\n".join(points) + "\n", encoding="utf-8")
+    if cropped:
+        log(f"Cropped {cropped} photos to the crop box (on average {100 * saved / cropped:.0f}% of the pixels "
+            "were background)")
+    return cropped
 
 
 def _limit_views(dense_dir: Path, quality: Quality, score: dict | None, log) -> int:
@@ -105,8 +206,13 @@ def _dense_cpu(dense_dir: Path, mvs: Path, quality: Quality, log, progress) -> P
 
 
 def dense_mesh(dense_dir: Path, work: Path, quality: Quality, log=print, progress=lambda f, m="": None,
-               use_gpu: bool = True, score: dict | None = None) -> tuple[Path, str]:
-    """Undistorted COLMAP model -> raw mesh. Returns (PLY path, "gpu" or "cpu")."""
+               use_gpu: bool = True, score: dict | None = None, crop=None) -> tuple[Path, str]:
+    """Undistorted COLMAP model -> raw mesh. Returns (PLY path, "gpu" or "cpu").
+
+    crop: region of interest (CropBox, reconstruction frame); the photos are cropped to it first.
+    """
+    if crop is not None:
+        crop_to_box(dense_dir, crop, log)
     mvs = work / "mvs"
     mvs.mkdir(parents=True, exist_ok=True)
     for old in mvs.glob("*"):

@@ -131,8 +131,12 @@ markers (`mat.fit_markers`), exposure and white balance locked while recording (
 and 3-point diameters for CAD, one-page PDF report, two-colour 3MF mat.
 
 1. **First real capture with the new version**: run `docs/collaudo.md` (A–H), fix what it reveals.
-2. **Quality on real data**: depth maps only inside the crop box (skip the background, faster), learned
-   features in COLMAP 4 (ALIKED) on low-texture parts, compare COLMAP and OpenMVS dense on the same capture.
+2. **Quality on real data**: compare COLMAP and OpenMVS dense on the same capture.
+   Done: depth-map photos cropped to the part (`mvs.crop_to_box`): on the radiator, same 40 min, 53 of 122
+   photos cropped (42% background), finer cells and some of them open, 501k faces instead of 342k.
+   Tried and dropped: ALIKED + LightGlue in COLMAP 4.2.1. Its ONNX CUDA provider does not load (no cuDNN in
+   the COLMAP build), and on the CPU 25 close-ups took 8 min against 9 s for GPU SIFT with fewer verified
+   pairs (142 vs 159).
 3. **Masks for objects that cannot sit on a plane**: local segmentation (SAM2 / BiRefNet, no network).
 4. **Phone preview** (Object Capture on device) and notes/photos attached to a capture.
 5. **CAD**: plane and cylinder fitting on a picked region, USDZ export.

@@ -372,7 +372,8 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
 
             job.start("align")
             sfm = run_sfm(bundle, work, quality, job.log, job.progress, options.gpu,
-                          photo_size=None if (options.texture or "splat" in names) else quality.dense_size)
+                          photo_size=None if (options.texture or "splat" in names or bundle.crop_box is not None)
+                          else quality.dense_size)  # full size when the photos get cropped to the part
             report["compute"] = {"features": sfm.computed_on, "dense": "cpu"}
             views = sfm.views
             report["warnings"] += sfm.warnings
@@ -396,7 +397,11 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         if photo:
             from .mvs import dense_mesh
 
-            mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu, scores)
+            # depth maps only where the part is: the box (reaching down to the support), when it is metric
+            roi = (bundle.crop_box.extended_down(min(float(bundle.crop_box.size.max()), 0.3))
+                   if bundle.crop_box is not None and metric and p["isolate"] else None)
+            mesh_path, dense_on = dense_mesh(sfm.dense_dir, work, quality, job.log, job.progress, options.gpu, scores,
+                                             crop=roi)
             report["compute"]["dense"] = dense_on
             try:
                 mesh = Mesh.read(mesh_path)
