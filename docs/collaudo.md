@@ -12,14 +12,16 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 - ☐ **A2** In basso a sinistra c'è il riquadro del telefono con **Network code** e **Password** per l'abbinamento. Se compare in rosso **Wi-Fi transfer blocked by Windows**, apri **How to fix** e segui i passi (PowerShell come amministratore, `tools\allow-wifi.ps1`), poi **I Ran It · Check Again**: la scritta rossa sparisce. *Serve solo per il Wi-Fi: il cavo funziona sempre.*
 - ☐ **A3** Clic su **Create a demo capture**. Dopo circa un minuto compare "Synthetic box + cylinder" nella lista.
 - ☐ **A4** Qualità **Draft** → **Process**. Finisce in meno di un minuto; il modello ruota col mouse; le misure sono circa 85 × 63 × 83 mm (l'oggetto vero è 80 × 60 × 80: il LiDAR sbaglia di qualche mm, è normale).
-- ☐ **A5** Qualità **Medium** → se richiesto **Install OpenMVS**, poi **Process**. Finisce in pochi minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
+- ☐ **A5** Qualità **Medium** → **Process**. Finisce in pochi minuti; misure entro ±1 mm da 80 × 60 × 80; **Scale from: Scan mat**.
+- ☐ **A5b** Mentre elabora, in basso compaiono tempo trascorso, tempo che manca e ora di fine (es. `3:12 · ~4 min left · done ≈ 13:42`). La stima si assesta dopo il primo minuto.
 - ☐ **A6** Viste **Texture / Clay / Wire** e **Grid** funzionano; tema chiaro/scuro (icona in alto a sinistra) funziona. Il pannello di destra ha tre schede (**Process / Result / Export**) e non scorre.
 - ☐ **A7** Scheda **Export**: **3D print**, togli la spunta a 3MF (deve restare tolta), **Export STL** → **Open Export Folder**. Apri lo STL nello slicer: dimensioni in mm corrette, base piatta appoggiata al piano, nessun errore di mesh aperta.
 - ☐ **A8** Export **Blender / render** → apri il GLB in Blender: texture visibile, oggetto dritto.
 - ☐ **A9** Calibrazione su un lato: scheda **Result**, scegli il lato X, scrivi `100`, **Apply Calibration**. Le misure cambiano in proporzione; **Reset calibration** le riporta com'erano.
 - ☐ **A10** Calibrazione su due punti: **Measure** sopra il modello, clic su due punti, compare la distanza; scrivi la lunghezza vera e **Calibrate**.
-- ☐ **A11** GPU: se nella scheda **Process** compare **Enable GPU**, premilo (scarica 415 MB una volta; su questo PC è già installato). In basso a sinistra deve esserci **GPU: In use** e, dopo un'elaborazione Medium, nella scheda **Result** **Computed on: GPU**. Durante il calcolo la barra in basso mostra *Computing depth maps (GPU) xx%*.
+- ☐ **A11** Componenti: al primo avvio `Start Calco.cmd` scarica da solo OpenMVS e (con scheda NVIDIA) il motore GPU. Se mancano, l'app li installa da sola e mostra *Setting up … %* nella scheda Process: nessun pulsante da premere. Dopo un'elaborazione, in **Result** c'è **Computed on: GPU**.
 - ☐ **A12** Prova **High** sulla demo: più lento di Medium (le foto sono usate a 2000 px), misure uguali o migliori. Annota il tempo: `______`.
+- ☐ **A13** **Field test** in alto a sinistra apre questo foglio: le voci si spuntano e si può aggiungere una nota; restano salvate sul PC.
 
 ## B. Tappetino di scansione (una volta sola)
 
@@ -62,6 +64,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **D3b** Scatta solo quando tieni il telefono quasi fermo (meno di ~5 cm/s e ~12°/s): così le foto non vengono mosse. Se vai veloce compare *Slow down*. Il ritmo giusto è: sposta, fermati un attimo, sposta.
 - ☐ **D3c** **Lente ravvicinata automatica**: durante la scansione avvicinati molto a un dettaglio (meno di ~20 cm). Dopo mezzo secondo senti una vibrazione e compare la scritta lime *Close-up lens · LiDAR paused*: ora scatta con la lente che mette a fuoco da vicino. Quando ti allontani torna da solo al LiDAR (altra vibrazione), con box e anello di copertura come prima. Il pulsante **LiDAR** in basso a sinistra fa tornare subito.
 - ☐ **D3d** Durante la parte ravvicinata il LiDAR è in pausa (limite di iPhone: LiDAR e lente macro non funzionano insieme). Gira attorno al dettaglio a piccoli passi; il PC colloca quelle foto usando le foto normali, quindi **fai sempre anche il giro normale attorno all'oggetto**.
+- ☐ **D3e** **Flip** (pezzi da scansionare sopra e sotto, es. griglie): finito un lato, metti in pausa → **Flip: scan the other side**. In alto compare *Side 2*, la copertura riparte da zero e la box sparisce: gira il pezzo, **Place box**, **Start**. Sul PC la scansione viene elaborata lato per lato e unita da sola (in **Result**: *Sides overlap* e *Sides distance*).
 - ☐ **D4** Muoviti troppo in fretta: compare **Slow down** e smette di scattare. Rallenta: riprende.
 - ☐ **D5** Fai un giro completo ad altezza oggetto, poi un secondo giro dall'alto (~45°). L'anello di copertura in alto si riempie di verde (anello interno = giro basso, esterno = giro alto).
 - ☐ **D6** Puntini bianchi restano sospesi nei punti da cui hai scattato.
@@ -99,6 +102,11 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **F4** La differenza è dentro il valore **Expected error** mostrato dall'app. Obiettivo per pezzi a incastro: ≤ 0,3 mm su oggetti di 10 cm in **High**.
 - ☐ **F5** Stampa 3D di verifica: esporta **3D print**, stampa, misura il pezzo stampato.
 - ☐ **F6** Stessa scansione **senza tappetino** (oggetto sul tavolo): **Scale from: LiDAR**, errore atteso ~1%. Serve a sapere quanto fidarti quando il tappetino non si può usare.
+
+## F2. Due lati in scansioni separate
+
+- ☐ **F7** Due scansioni dello stesso pezzo (es. fronte e retro), entrambe elaborate. Nella scheda **Process** di una delle due: **Combine with another side…** → scegli l'altra → **Combine Sides**. Il risultato è un modello unico chiuso; in **Export** trovi anche i due lati allineati separati (`side1.ply`, `side2.ply`) per rifiniture in un altro programma.
+- ☐ **F8** Controlla *Sides distance*: sotto ~1 mm i lati combaciano bene. Se l'app dice che si sovrappongono troppo poco, rifai le scansioni in modo che i bordi e i fianchi del pezzo si vedano in entrambe.
 
 ## G. Casi difficili (uno alla volta, annota il risultato)
 

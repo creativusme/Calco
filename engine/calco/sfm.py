@@ -106,9 +106,33 @@ def _known_pose_model(bundle: Bundle, db: Path, image_dir: Path, out: Path, log)
     ba = pycolmap.BundleAdjustmentOptions()
     ba.refine_principal_point = False
     pycolmap.bundle_adjustment(rec, ba)
+    drift = _drift_mm(rec, by)
+    if drift[0] > 10 or drift[1] > 30:
+        # With few points the free adjustment can slide whole parts of the model away (seen on a real
+        # capture: 25 cm). The phone poses are better than that: keep them and refine only the rest.
+        log(f"Free adjustment drifted from the phone poses (median {drift[0]:.0f} mm, p90 {drift[1]:.0f} mm): "
+            "keeping the phone poses fixed")
+        rec = pycolmap.triangulate_points(pycolmap.Reconstruction(txt), db, image_dir, out / "triangulated")
+        ba.refine_rig_from_world = False
+        pycolmap.bundle_adjustment(rec, ba)
     log(f"Phone-pose model: {rec.num_reg_images()} photos, {len(rec.points3D)} points, "
         f"reprojection {rec.compute_mean_reprojection_error():.2f} px")
     return rec
+
+
+def _drift_mm(rec: "pycolmap.Reconstruction", phone: dict) -> tuple[float, float]:
+    """How far the solved cameras are from the phone's, after the best similarity (median, 90th pct)."""
+    from .geom import robust_umeyama
+
+    names = [im.name for im in rec.images.values() if im.has_pose and im.name in phone]
+    if len(names) < 4:
+        return 0.0, 0.0
+    by_name = {im.name: im for im in rec.images.values()}
+    src = np.array([by_name[n].projection_center() for n in names])
+    dst = np.array([phone[n].center for n in names])
+    s, R, t, _, _ = robust_umeyama(src, dst)
+    res = np.linalg.norm(dst - (s * src @ R.T + t), axis=1) * 1000
+    return float(np.median(res)), float(np.percentile(res, 90))
 
 
 def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=lambda f, m="": None,
@@ -231,11 +255,23 @@ def run_sfm(bundle: Bundle, work: Path, quality: Quality, log=print, progress=la
             opts.fix_existing_frames = True
             more = pycolmap.incremental_mapping(db, image_dir, sfm_dir / "models", options=opts, input_path=seed)
             opts.fix_existing_frames = False
+            base = rec
             if more:
                 rec = max(more.values(), key=lambda r: r.num_reg_images())
+            # Placing the close-ups must not move the phone-pose cameras. When it does (seen on a real
+            # capture: up to 1.3 m), the close-ups were placed wrongly and would wreck the geometry.
+            before = {im.name: im.projection_center() for im in base.images.values() if im.has_pose}
+            moved = np.array([np.linalg.norm(im.projection_center() - before[im.name]) * 1000
+                              for im in rec.images.values() if im.has_pose and im.name in before] or [0.0])
+            if len(moved) < 0.8 * len(before) or np.median(moved) > 5 or np.percentile(moved, 90) > 20:
+                log(f"Placing the close-ups moved the phone-pose cameras (median {np.median(moved):.1f} mm, "
+                    f"max {moved.max():.0f} mm): keeping the phone-pose model without them")
+                warnings.append(f"The {len(free)} close-up photos could not be placed reliably and were left out. "
+                                "Take more normal photos around the part so the close-ups have something to attach to.")
+                rec = base
             placed = sum(1 for im in rec.images.values() if im.has_pose and im.name in {f.image.name for f in free})
             log(f"Placed {placed} of {len(free)} close-up photos on the phone-pose model")
-            if placed < 0.5 * len(free) and len(free) > len(posed):
+            if placed < 0.5 * len(free) and len(free) > len(posed) and rec is not base:
                 log("Most close-ups did not fit the phone-pose model: solving all photos together instead")
                 rec = None
     if rec is None:

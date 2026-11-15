@@ -66,6 +66,23 @@ found" before computing anything.
 Not tuned yet: depth maps take about 2–2.5 s per photo per pass, slower than an RTX 3060 should manage.
 Worth profiling (image loading, cache size, fewer geometric-consistency iterations) once real captures exist.
 
+## Two-sided parts
+
+Flip on the phone (frames carry `side`) or Combine on the computer (two finished results). Each side is
+reconstructed and isolated on its own; `merge.py` aligns the second to the first by shape (turned-over and
+rotated guesses + FPFH/RANSAC, then point-to-plane ICP) and fuses both with screened Poisson into one closed
+mesh. **Verified** on synthetic data: a turned-over part aligned to 0.2 mm (the simulated noise), closed,
+dimensions within the noise; a two-sided synthetic capture end to end (LiDAR). **Not yet** on a real part.
+The mat cannot be the common reference: it stays put while the part is turned.
+
+## Hardware notes (measured on the RTX 3060 + i3-12100F)
+
+- Real capture, 122 photos, High: 40 min, of which 31 min GPU depth maps at 2000 px (about 6.5 s per photo
+  photometric + 9 s geometric). A faster NVIDIA card scales this part almost linearly; the CPU parts
+  (camera solving, meshing) are a few minutes.
+- A Mac (even an Ultra) cannot run this pipeline on its GPU: COLMAP patch-match and OpenMVS need CUDA. Apple's
+  own Object Capture (macOS only, closed) is fast on Apple Silicon but is a different engine.
+
 ## Why not a home-made photogrammetry engine
 
 COLMAP and OpenMVS are the reference open implementations and are what the commercial-grade open pipelines
