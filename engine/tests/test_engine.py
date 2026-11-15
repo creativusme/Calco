@@ -434,3 +434,28 @@ def test_dense_photos_cropped_to_the_part(tmp_path):
         for p in part[::50]:
             u, v = cam.img_from_cam(img.cam_from_world() * p)
             assert 0 <= u < cam.width and 0 <= v < cam.height
+
+
+def test_photo_export_formats_agree(bundle_dir, tmp_path):
+    import zipfile
+
+    from scipy.spatial.transform import Rotation
+
+    from calco.photo_export import write_photo_package
+
+    b = load_bundle(bundle_dir)
+    info = write_photo_package(b, tmp_path / "photos.zip")
+    assert info == {"photos": 20, "cameras": 20, "frame": "arkit"}
+    z = zipfile.ZipFile(tmp_path / "photos.zip")
+    frames = json.loads(z.read("transforms.json"))["frames"]
+    lines = z.read("colmap/sparse/0/images.txt").decode().splitlines()
+    for f, fr, line in zip(b.frames, frames, lines):
+        assert np.allclose(np.array(fr["transform_matrix"]), f.pose, atol=1e-6)  # OpenGL c2w = ARKit pose
+        v = line.split()
+        R = Rotation.from_quat([float(v[2]), float(v[3]), float(v[4]), float(v[1])]).as_matrix()
+        w2c = f.world_to_cam_cv
+        assert np.allclose(R, w2c[:3, :3], atol=1e-6) and np.allclose([float(x) for x in v[5:8]], w2c[:3, 3], atol=1e-6)
+        xmp = z.read(f"xmp/{f.image.stem}.xmp").decode()
+        pos = [float(x) for x in xmp.split("<xcr:Position>")[1].split("<")[0].split()]
+        assert np.allclose(pos, f.center, atol=1e-6)
+    assert len([n for n in z.namelist() if n.startswith("images/")]) == 20

@@ -13,7 +13,6 @@ struct CaptureSummary: Identifiable, Equatable {
     var uploaded: Bool
 
     var previewURL: URL { url.appendingPathComponent("preview.jpg") }
-    var meshURL: URL { url.appendingPathComponent("preview.obj") }
 }
 
 final class CaptureStore: ObservableObject {

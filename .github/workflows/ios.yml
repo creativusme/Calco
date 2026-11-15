@@ -5,6 +5,9 @@ on:
     paths: ["ios/**", ".github/workflows/ios.yml"]
   workflow_dispatch:
 
+permissions:
+  contents: write  # to publish the IPA as the latest release
+
 jobs:
   build:
     runs-on: macos-15
@@ -38,3 +41,14 @@ jobs:
         with:
           name: Calco-unsigned-ipa
           path: ios/build/Build/Products/Release-iphoneos/Calco-unsigned.ipa
+      - name: Publish as the latest release (download link on the repository page)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep CFBundleShortVersionString ios/project.yml | cut -d'"' -f2)
+          cd ios/build/Build/Products/Release-iphoneos
+          gh release delete ios-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create ios-latest Calco-unsigned.ipa --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Calco for iPhone $version" --latest \
+            --notes "Unsigned IPA built from ${GITHUB_SHA::7}. Install it with Sideloadly (it signs the app with your Apple ID)."

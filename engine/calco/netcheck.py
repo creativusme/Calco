@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 _SCRIPT = r"""
 $py = $env:CALCO_PY
@@ -51,7 +52,7 @@ def check() -> dict:
     if public:
         problems.append(f"The network '{', '.join(public)}' is set to Public, so Windows refuses connections from the phone.")
     return {"ok": not problems, "checked": True, "problems": problems, "python": python_exe(),
-            "fix_script": "tools\\allow-wifi.ps1"}
+            "fix_script": str(Path(__file__).resolve().parents[2] / "tools" / "allow-wifi.ps1")}
 
 
 class NetWatch:

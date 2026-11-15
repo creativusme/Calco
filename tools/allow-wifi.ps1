@@ -3,7 +3,8 @@
   Lets the Calco app on the iPhone reach this computer over Wi-Fi.
 
   Run it yourself, once, in an administrator PowerShell:
-      powershell -ExecutionPolicy Bypass -File tools\allow-wifi.ps1
+      powershell -ExecutionPolicy Bypass -File "<Calco folder>\tools\allow-wifi.ps1"
+  (the app shows the exact command, with full paths, under "How to fix")
 
   What it changes (and nothing else):
     1. Networks currently marked "Public" become "Private" (your home/office network).
@@ -16,7 +17,9 @@
   Not needed for the USB cable: that path does not go through the firewall.
 #>
 
-$python = (& python -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim()
+param([string]$Python = "")  # the app passes the exact Python it runs on
+
+$python = if ($Python) { $Python } else { (& python -c "import sys; print(getattr(sys, '_base_executable', sys.executable))").Trim() }
 if (-not (Test-Path $python)) { throw "Python not found ($python). Install Python 3.12 first." }
 Write-Host "Python used by Calco: $python"
 

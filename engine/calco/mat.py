@@ -327,14 +327,14 @@ def render_markers(sheet: int = 0, dpi: int = 300) -> np.ndarray:
     side = round(MARKER_MM * px)
     for k in range(6):
         tid = MARKER_FIRST_ID + sheet * 6 + k
-        cx, cy = (52.5 + 105.0 * (k % 2)) * px, (52.0 + 92.0 * (k // 2)) * px
+        cx, cy = (52.5 + 105.0 * (k % 2)) * px, (50.0 + 86.0 * (k // 2)) * px  # cells end at 264 mm
         x, y = round(cx - side / 2), round(cy - side / 2)
         img[y:y + side, x:x + side] = cv2.aruco.generateImageMarker(_DICT, tid, side)
         cut = round(12 * px)  # cut line 12 mm outside the black square: the white border tags need
         cv2.rectangle(img, (x - cut, y - cut), (x + side + cut, y + side + cut), 170, max(1, round(0.2 * px)))
         cv2.putText(img, f"Calco marker {tid}  -  {MARKER_MM:.1f} mm", (x - cut + round(2 * px), y + side + cut - round(2 * px)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.07 * px, 0, max(1, round(0.1 * px)), cv2.LINE_AA)
-    fy, bx0 = 282 * px, 10 * px
+    fy, bx0 = 284 * px, 10 * px  # bar and its label below the last row, inside the printable area
     lw = max(1, round(0.3 * px))
     cv2.line(img, (round(bx0), round(fy)), (round(bx0 + 100 * px), round(fy)), 0, lw)
     for bx in (bx0, bx0 + 100 * px):

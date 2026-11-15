@@ -386,6 +386,31 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
             raise HTTPException(404, "no model yet")
         return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "no-store"})
 
+    def photo_zip(bundle_dir: Path, out: Path, job_dir: Path | None, name: str):
+        from .photo_export import write_photo_package
+
+        write_photo_package(load_bundle(bundle_dir), out, job_dir)
+        safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in name).strip() or "scan"
+        return FileResponse(out, media_type="application/zip", filename=f"{safe} photos.zip",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/jobs/{jid}/photos.zip")
+    def job_photos(jid: str):
+        """The capture's photos with the cameras refined by this result (model frame)."""
+        j = job_or_404(jid)
+        d = lib.job_dir(jid)
+        (d / "exports").mkdir(exist_ok=True)
+        return photo_zip(lib.capture_path(j["capture_id"]), d / "exports" / "photos.zip", d, j["capture_name"])
+
+    @app.get("/api/captures/{cid}/photos.zip")
+    def capture_photos(cid: str):
+        """The capture's photos with the phone's ARKit cameras (nothing processed yet)."""
+        d = capture_dir(cid)
+        if not d.exists():
+            raise HTTPException(404, "no such capture")
+        out = Path(tempfile.gettempdir()) / f"calco-{cid}-photos.zip"
+        return photo_zip(d, out, None, load_bundle(d).name)
+
     @app.get("/api/jobs/{jid}/report.pdf")
     def report_pdf(jid: str):
         from .report_pdf import write_report

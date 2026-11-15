@@ -77,7 +77,7 @@ export interface Info {
   presets: { quality: Quality[]; profiles: Profile[]; formats: string[]; units: string[] };
   demo_running: boolean;
   phone: PhoneStatus;
-  network: { ok: boolean; checked: boolean; problems?: string[]; fix_script?: string };
+  network: { ok: boolean; checked: boolean; problems?: string[]; fix_script?: string; python?: string };
 }
 
 export interface PhoneStatus {
@@ -119,6 +119,8 @@ export const api = {
   deleteJob: (id: string) => call(`/api/jobs/${id}`, { method: "DELETE" }),
   log: (id: string) => fetch(`${BASE}/api/jobs/${id}/log`).then((r) => r.text()),
   modelUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/model.glb`,
+  jobPhotosUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/photos.zip`,
+  capturePhotosUrl: (id: string) => `${BASE}/api/captures/${id}/photos.zip`,
   reportUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/report.pdf`,
   splatUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/splat.ply`,
   calibrate: (id: string, scale: number) => post<Job>(`/api/jobs/${id}/calibrate`, { scale }),

@@ -264,7 +264,9 @@ function PhoneCard({ info }: { info: Info }) {
 }
 
 function WifiHelp({ info, onClose }: { info: Info; onClose: () => void }) {
-  const cmd = "powershell -ExecutionPolicy Bypass -File tools\\allow-wifi.ps1";
+  // full paths: an administrator PowerShell starts in System32, not in the Calco folder
+  const script = info.network.fix_script ?? "tools\\allow-wifi.ps1";
+  const cmd = `powershell -ExecutionPolicy Bypass -File "${script}"` + (info.network.python ? ` -Python "${info.network.python}"` : "");
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", key);
@@ -280,9 +282,10 @@ function WifiHelp({ info, onClose }: { info: Info; onClose: () => void }) {
           <p><strong>The USB cable always works</strong>, without changing anything. To use Wi-Fi as well, run this once:</p>
           <ol>
             <li>Start menu → type <em>PowerShell</em> → right-click → <em>Run as administrator</em>.</li>
-            <li>Go to the Calco folder (<code>cd</code> to where <code>Start Calco.cmd</code> is) and run:</li>
+            <li>Paste this and press Enter:</li>
           </ol>
           <pre>{cmd}</pre>
+          <button className="button" onClick={() => navigator.clipboard?.writeText(cmd)}>Copy Command</button>
           <p className="muted small">It marks your network as Private, removes the rule that blocks Python and allows Calco on private networks only. Read <code>tools\allow-wifi.ps1</code> first if you like: it is short and commented.</p>
           <button className="button" onClick={() => { api.recheckNetwork(); onClose(); }}>I Ran It · Check Again</button>
         </div>
@@ -688,6 +691,7 @@ function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture
         </label>
       </div>
 
+      <p className="tight"><a className="link small" href={api.capturePhotosUrl(capture.id)} download>Only export the photos, with the phone's camera positions</a></p>
       {info && (info.tools.installing || info.tools.install_error) && <SetupNotice info={info} />}
       <button className="button primary wide" onClick={start} disabled={!!capture.error || !!needsOpenMVS}>
         {needsOpenMVS ? "Waiting for setup…" : "Process"}
@@ -854,6 +858,10 @@ function ExportPanel({ job, info }: { job: Job; info: Info }) {
           <button className="link" onClick={() => api.reveal(job.id)}>Open Export Folder</button>
         </div>
       )}
+
+      <div className="label spaced">Photos for Another Program</div>
+      <a className="button wide" href={api.jobPhotosUrl(job)} download>Photos + Cameras (ZIP)</a>
+      <p className="hint tight">Original photos with the cameras refined here, lined up with this model: COLMAP, Nerfstudio/splatting (transforms.json), RealityScan (XMP), Metashape (CSV).</p>
 
       <div className="label spaced">Report</div>
       <a className="button wide" href={api.reportUrl(job)} target="_blank" rel="noreferrer">PDF Report</a>
