@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Capture, type ChecklistData, type ExportResult, type Info, type Job } from "./api";
-import { Viewer, type ViewMode } from "./Viewer";
+import type * as THREE from "three";
+import { Viewer, circleThrough, type ViewMode } from "./Viewer";
 
 const NBSP = " ";
 const fmtTime = (s: number) => (s < 90 ? `${Math.round(s)}${NBSP}s` : s < 5400 ? `${Math.round(s / 60)}${NBSP}min` : `${(s / 3600).toFixed(1)}${NBSP}h`);
@@ -73,8 +74,9 @@ export default function App() {
               <CaptureStatus capture={c} />
             </button>
           ))}
-          {!captures.length && !offline && <p className="muted pad">No captures yet. Send one from the phone, or create a demo capture.</p>}
+          {!captures.length && !offline && <p className="muted pad">No captures yet. Send one from the phone, import photos or a video, or create a demo capture.</p>}
         </nav>
+        {!offline && <ImportButton onImported={(id) => { refresh(); setSelected(id); setView("captures"); }} />}
         <SidebarFooter info={info} offline={offline} />
       </aside>
 
@@ -102,6 +104,42 @@ function CaptureStatus({ capture }: { capture: Capture }) {
   return <span className={`pip pip-${state}`} role="img" aria-label={label} title={label} />;
 }
 
+/** Photos or videos from any camera become a capture (no LiDAR, no poses: scale from the mat or a caliper). */
+function ImportButton({ onImported }: { onImported: (captureId: string) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const upload = async (files: File[]) => {
+    if (!files.length) return;
+    setError(null);
+    const iid = crypto.randomUUID();
+    try {
+      for (const [i, f] of files.entries()) {
+        setBusy(`Uploading ${i + 1}/${files.length}`);
+        await api.importFile(iid, f);
+      }
+      setBusy(files.some((f) => f.type.startsWith("video/")) ? "Picking sharp video frames…" : "Creating capture…");
+      const { capture } = await api.importComplete(iid, null);
+      onImported(capture.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+      if (input.current) input.current.value = "";
+    }
+  };
+  return (
+    <div className="import">
+      <input ref={input} type="file" multiple accept="image/jpeg,image/png,image/tiff,image/webp,video/*" hidden
+        onChange={(e) => upload([...(e.target.files ?? [])])} />
+      <button className="button wide" disabled={!!busy} onClick={() => input.current?.click()}>
+        {busy ?? "Import Photos or Video…"}
+      </button>
+      {error && <p className="error-text small" aria-live="polite">{error}</p>}
+    </div>
+  );
+}
+
 function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean }) {
   const menu = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -127,6 +165,9 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
           <div className="menu-row">
             {["A5", "A4"].map((s) => <a key={s} className="button" href={api.mat3dUrl(s)}>{s}</a>)}
           </div>
+          <div className="label">Big parts: loose markers, 60 mm</div>
+          <div className="menu-row"><a className="button" href={api.markersUrl()}>Markers PDF</a></div>
+          <p className="muted small">Place 3 or more around the part, flat, where the photos see them.</p>
           <p className="muted small">Glue paper mats to something rigid and flat. A curled mat still gives the right scale, a flat one is more accurate.</p>
         </div>
       </details>
@@ -274,7 +315,8 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
   const [mode, setMode] = useState<ViewMode>("textured");
   const [grid, setGrid] = useState(true);
   const [measuring, setMeasuring] = useState(false);
-  const [distance, setDistance] = useState<number | null>(null);
+  const [points, setPoints] = useState<THREE.Vector3[]>([]);
+  const [picks, setPicks] = useState(2); // 2 = distance, 3 = diameter of a circle through 3 points
   const [showLog, setShowLog] = useState(false);
   const hasModel = !!job?.has_model && job.state === "done";
   // results processed without colour texture are plain white: show them as clay, no Texture button
@@ -289,7 +331,7 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
     if (lastState.current && lastState.current !== "done" && job?.state === "done") setTab("result");
     lastState.current = job?.state;
   }, [job?.state]);
-  useEffect(() => { setMeasuring(false); setDistance(null); }, [job?.id]);
+  useEffect(() => { setMeasuring(false); setPoints([]); }, [job?.id]);
 
   const remove = async () => {
     if (!confirm(`Delete “${capture.name}” with its photos and all results? This cannot be undone.`)) return;
@@ -341,17 +383,17 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
         <div className="viewport">
           {hasModel && job ? (
             <>
-              <Viewer url={api.modelUrl(job)} splatUrl={hasSplat ? api.splatUrl(job) : null} mode={view} grid={grid} theme={theme} measuring={measuring} onMeasure={setDistance} />
+              <Viewer url={api.modelUrl(job)} splatUrl={hasSplat ? api.splatUrl(job) : null} mode={view} grid={grid} theme={theme} measuring={measuring} picks={picks} onMeasure={setPoints} />
               <div className="toolbar" role="toolbar" aria-label="View">
                 {([...(hasSplat ? ["splat"] : []), ...(coloured ? ["textured"] : []), "clay", "wire"] as ViewMode[]).map((m) => (
                   <button key={m} aria-pressed={view === m} onClick={() => setMode(m)}>{{ splat: "Splat", textured: "Texture", clay: "Clay", wire: "Wire" }[m]}</button>
                 ))}
                 <span className="sep" aria-hidden="true" />
                 <button aria-pressed={grid} onClick={() => setGrid(!grid)}>Grid</button>
-                <button aria-pressed={measuring} onClick={() => { setMeasuring(!measuring); setDistance(null); }}>Measure</button>
+                <button aria-pressed={measuring} onClick={() => { setMeasuring(!measuring); setPoints([]); }}>Measure</button>
               </div>
               {measuring
-                ? <MeasureBar job={job} distance={distance} refresh={refresh} />
+                ? <MeasureBar job={job} points={points} picks={picks} setPicks={(n) => { setPicks(n); setPoints([]); }} refresh={refresh} />
                 : job.report && <Dimensions job={job} />}
             </>
           ) : (
@@ -395,9 +437,13 @@ function Dimensions({ job }: { job: Job }) {
 }
 
 /** Two-point measure: shows the distance and can calibrate the model from a known length. */
-function MeasureBar({ job, distance, refresh }: { job: Job; distance: number | null; refresh: () => void }) {
+function MeasureBar({ job, points, picks, setPicks, refresh }: {
+  job: Job; points: THREE.Vector3[]; picks: number; setPicks: (n: number) => void; refresh: () => void;
+}) {
   const [real, setReal] = useState("");
-  const raw = distance != null ? distance * 1000 : null; // millimetres before calibration
+  const circle = picks === 3 && points.length === 3 ? circleThrough(points[0], points[1], points[2]) : null;
+  // millimetres before calibration: a distance, or a diameter
+  const raw = picks === 2 && points.length === 2 ? points[0].distanceTo(points[1]) * 1000 : circle ? circle.radius * 2000 : null;
   const apply = async () => {
     const m = Number(real.replace(",", "."));
     if (!(m > 0) || !raw) return;
@@ -407,11 +453,15 @@ function MeasureBar({ job, distance, refresh }: { job: Job; distance: number | n
   };
   return (
     <div className="readout readout-measure">
+      <span className="segmented" role="group" aria-label="Measure">
+        <button aria-pressed={picks === 2} onClick={() => setPicks(2)}>Distance</button>
+        <button aria-pressed={picks === 3} onClick={() => setPicks(3)}>Diameter</button>
+      </span>
       {raw == null ? (
-        <span className="muted">Click two points on the model</span>
+        <span className="muted">{picks === 2 ? "Click two points on the model" : "Click three points on the edge of a hole or shaft"}</span>
       ) : (
         <>
-          <span><i>Distance</i>{fmtMm(raw * job.user_scale)}</span>
+          <span><i>{picks === 2 ? "Distance" : "Diameter"}</i>{fmtMm(raw * job.user_scale)}</span>
           <label className="inline-field">
             <span className="muted">Real length</span>
             <input name="real-length" autoComplete="off" inputMode="decimal" placeholder="mm…" value={real} onChange={(e) => setReal(e.target.value)}
@@ -677,7 +727,7 @@ function ResultPanel({ job, refresh }: { job: Job; refresh: () => void }) {
   const dims = r.model.dimensions_mm;
   const [axis, setAxis] = useState(0);
   const [measured, setMeasured] = useState("");
-  const source = { mat: "Scan mat", lidar: "LiDAR", none: "No reference" }[r.scale.source];
+  const source = { mat: "Scan mat", markers: "Markers", lidar: "LiDAR", none: "No reference" }[r.scale.source];
   const calibrated = Math.abs(job.user_scale - 1) > 1e-9;
   const value = Number(measured.replace(",", "."));
 
@@ -692,9 +742,10 @@ function ResultPanel({ job, refresh }: { job: Job; refresh: () => void }) {
     <div className="panel">
       <div className="label">Accuracy</div>
       <dl className="facts">
-        <dt>Scale from</dt><dd><span className={`tag tag-${calibrated ? "mat" : r.scale.source}`}>{calibrated ? "Caliper" : source}</span></dd>
+        <dt>Scale from</dt><dd><span className={`tag tag-${calibrated || r.scale.source === "markers" ? "mat" : r.scale.source}`}>{calibrated ? "Caliper" : source}</span></dd>
         {r.scale.expected_error_mm != null && !calibrated && (<><dt>Expected error</dt><dd className="mono">±{NBSP}{r.scale.expected_error_mm}{NBSP}mm</dd></>)}
         {r.scale.mat && (<><dt>Mat fit</dt><dd className="mono">{r.scale.mat.tags}{NBSP}tags · {r.scale.mat.fit_rms_mm}{NBSP}mm</dd></>)}
+        {r.scale.markers && (<><dt>Markers</dt><dd className="mono">{r.scale.markers.count} · spread {r.scale.markers.spread_pct}%</dd></>)}
         {r.alignment && (<><dt>Photos aligned</dt><dd className="mono">{r.alignment.registered}/{r.alignment.total} · {r.alignment.reprojection_px}{NBSP}px</dd></>)}
         {r.combined && (<><dt>Sides overlap</dt><dd className="mono">{r.combined.overlap_pct}%</dd><dt>Sides distance</dt><dd className="mono">{r.combined.distance_mm}{NBSP}mm</dd></>)}
         {r.photos && r.photos.dropped_blurry.length > 0 && (<><dt>Blurred, skipped</dt><dd className="mono">{r.photos.dropped_blurry.length}{NBSP}photos</dd></>)}
@@ -786,6 +837,10 @@ function ExportPanel({ job, info }: { job: Job; info: Info }) {
           <button className="link" onClick={() => api.reveal(job.id)}>Open Export Folder</button>
         </div>
       )}
+
+      <div className="label spaced">Report</div>
+      <a className="button wide" href={api.reportUrl(job)} target="_blank" rel="noreferrer">PDF Report</a>
+      <p className="hint tight">One page: views, dimensions and accuracy. For a site visit or a customer.</p>
     </div>
   );
 }

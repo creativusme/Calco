@@ -20,7 +20,7 @@ import trimesh
 from . import __version__, meshops, tools
 from .bundle import Bundle, load_bundle
 from .geom import fit_plane_ransac, sim3_matrix, transform_points
-from .mat import MatFit, detect_tags, fit_mat
+from .mat import MarkerFit, MatFit, detect_tags, fit_mat
 from .meshops import Mesh
 from .presets import QUALITY, Quality
 from .views import View, focus_point, views_from_bundle
@@ -189,14 +189,16 @@ class Job:
 @dataclass
 class ModelFrame:
     M: np.ndarray  # 4x4 similarity, reconstruction frame -> model frame
-    scale_source: str  # mat | lidar | none
+    scale_source: str  # mat | markers | lidar | none
     has_plane: bool
     mat: MatFit | None = None
     lidar_vs_mat_pct: float | None = None
+    markers: "MarkerFit | None" = None
     notes: list[str] = field(default_factory=list)
 
 
-def _detect_mat(views: list[View], print_scale: float, job: Job) -> MatFit | None:
+def _detect_mat(views: list[View], print_scale: float, job: Job) -> tuple[MatFit | None, "MarkerFit | None"]:
+    """The scan mat, or else loose scale markers (single tags of known size around a big part)."""
     from concurrent.futures import ThreadPoolExecutor
 
     from .select import spread_subset
@@ -219,9 +221,15 @@ def _detect_mat(views: list[View], print_scale: float, job: Job) -> MatFit | Non
     if fit:
         job.log(f"Scan mat {fit.layout}: {fit.tags_used} tags, fit {fit.rms_mm:.2f} mm RMS, "
                 f"scale {fit.scale:.5f} ({fit.method})")
+        return fit, None
+    from .mat import fit_markers
+
+    markers = fit_markers(obs, [v.P for v in views], print_scale)
+    if markers:
+        job.log(f"Scale markers: {markers.markers}, scale {markers.scale:.5f}, spread {markers.spread_pct:.2f}%")
     else:
-        job.log("No scan mat found")
-    return fit
+        job.log("No scan mat or scale markers found")
+    return None, markers
 
 
 def _frame_from_plane(mesh: Mesh, up: np.ndarray, threshold: float, metric: bool) -> ModelFrame:
@@ -380,7 +388,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
 
         # ---- scale reference
         job.start("scale")
-        mat = _detect_mat(views, options.print_scale, job)
+        mat, markers = _detect_mat(views, options.print_scale, job)
         job.done()
 
         # ---- geometry
@@ -424,7 +432,12 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             if p["isolate"] and crop is not None and metric:
                 roi = mesh.select_vertices(crop.contains(mesh.v, margin=0.05))
             frame = _frame_from_plane(roi if len(roi.f) else mesh, up, 2.5 * cut, metric)
-            if not metric:
+            if markers is not None:  # metres from the markers; orientation from the support plane
+                frame.M = np.diag([markers.scale] * 3 + [1.0]) @ frame.M
+                frame.scale_source, frame.markers = "markers", markers
+                if metric:
+                    frame.lidar_vs_mat_pct = round((markers.scale - 1.0) * 100, 3)
+            elif not metric:
                 report["warnings"].append("No scale reference (no LiDAR poses, no scan mat): the model is not to "
                                           "scale. Use Calibrate with a known measurement.")
 
@@ -532,6 +545,8 @@ def _scale_report(frame: ModelFrame, dims_mm: np.ndarray, views: list[View], pho
             scale_pct = 100.0 * frame.mat.rms_mm / mat_span + 0.05  # + printer/paper tolerance
         else:
             scale_pct = 0.2  # bent sheet: scale from neighbouring tags
+    elif frame.scale_source == "markers":
+        scale_pct = max(frame.markers.spread_pct / np.sqrt(frame.markers.markers), 0.1) + 0.05
     elif frame.scale_source == "lidar":
         scale_pct = 1.0
     else:
@@ -548,6 +563,7 @@ def _scale_report(frame: ModelFrame, dims_mm: np.ndarray, views: list[View], pho
         "source": frame.scale_source,
         "mat": frame.mat and {"layout": frame.mat.layout, "tags": frame.mat.tags_used,
                               "fit_rms_mm": round(frame.mat.rms_mm, 3), "method": frame.mat.method},
+        "markers": frame.markers and {"count": frame.markers.markers, "spread_pct": round(frame.markers.spread_pct, 3)},
         "lidar_vs_mat_pct": frame.lidar_vs_mat_pct,
         "scale_error_pct": scale_pct and round(scale_pct, 3),
         "surface_noise_mm": round(noise_mm, 2),

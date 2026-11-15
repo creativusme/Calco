@@ -16,7 +16,12 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | Scan mat that is not flat | **Verified** by simulation: 3 mm curl gives 0.02% scale error, a rolled sheet (20 cm radius) 0.14% |
 | 3D-printable mat (STL) | Files generated and dimensions checked; **never printed** |
 | Object isolation, flat closed base | **Verified** on synthetic data |
-| Export GLB, OBJ, STL, 3MF, PLY | **Verified** by tests (units, up axis) |
+| Export GLB, OBJ, STL, 3MF, PLY, DXF sections | **Verified** by tests (units, up axis, DXF layers) |
+| Import photos / video | **Verified** by tests (server upload, sharp video frames). Not yet processed from a real video |
+| Scale markers (60 mm, loose) | **Verified** by simulation (0.3% on three markers) and detection on the printed sheet. Not yet with a real print |
+| Two-colour 3MF mat | **Verified** in Bambu Studio 2.x (one object, parts on filaments 1 and 2) |
+| PDF report | **Verified** on the real radiator result |
+| Gaussian splat | **Verified** training on the real radiator (RTX 3060, ~7 steps/s at 1600 px) and loading in the viewer library. The on-screen view was not checked (browser pane hidden) |
 | Wi-Fi upload (phone pushes) | **Verified** by tests (resume, validation, path traversal). On the dev PC it was blocked by Windows Firewall (block rule for Python + Public network): detected and explained in the UI, fixed by `tools/allow-wifi.ps1` that the owner runs |
 | Cable transfer (computer pulls via usbmuxd) | **Verified** by tests against a fake phone (pull, resume, no re-download of deleted scans). usbmuxd answers on the dev PC. **Never tried with the real phone** |
 | Desktop UI in the browser | **Verified** by hand: library, process, tabs, viewer, two-point measure, calibration, export |
@@ -120,13 +125,15 @@ raise quality from here are listed under "Next", and they need real captures to 
 
 ## Next, in order
 
-1. **First real capture**: install the IPA, run `docs/collaudo.md`, fix what the first on-device run reveals.
-2. **Quality on real data**: depth-map masks from the crop box (skip the background), drop blurry frames, per-frame intrinsics, lock exposure/white balance in the app, compare COLMAP and OpenMVS dense results on the same capture, try the learned features in COLMAP 4 (ALIKED) on low-texture parts.
-3. **Macro mode** for parts under 3 cm (ultra-wide camera, no ARKit, scale from the mat).
-4. **Merge two scans** of the same part (upright + flipped) using the mat or ICP.
-5. **Loose scale markers** for parts too big for a mat; **AI masks** (SAM2/BiRefNet, running locally) for objects that cannot sit on a plane.
-6. **Phone preview** (Object Capture on device) and notes/photos attached to a capture.
-7. **Import** photo folders and video. (Gaussian splat output: done, `splat.py` + `splat_train.py`, gsplat
-   2DGS in its own Python 3.10 environment because gsplat ships Windows wheels only for 3.10.)
-8. **CAD helpers**: section slices to DXF, plane/cylinder fitting, USDZ/FBX export, PDF site report.
-9. Tauri installer, engine bundled without a separate Python install.
+Done since the first plan: close-up lens inside the normal scan, Flip and Combine for two-sided parts,
+import of photos and video (`importer.py`), Gaussian splat (`splat.py`, optional), loose 60 mm scale
+markers (`mat.fit_markers`), exposure and white balance locked while recording (iOS 0.5), DXF cross-sections
+and 3-point diameters for CAD, one-page PDF report, two-colour 3MF mat.
+
+1. **First real capture with the new version**: run `docs/collaudo.md` (A–H), fix what it reveals.
+2. **Quality on real data**: depth maps only inside the crop box (skip the background, faster), learned
+   features in COLMAP 4 (ALIKED) on low-texture parts, compare COLMAP and OpenMVS dense on the same capture.
+3. **Masks for objects that cannot sit on a plane**: local segmentation (SAM2 / BiRefNet, no network).
+4. **Phone preview** (Object Capture on device) and notes/photos attached to a capture.
+5. **CAD**: plane and cylinder fitting on a picked region, USDZ export.
+6. **Installer**: Tauri build in CI and the engine bundled without a separate Python install.

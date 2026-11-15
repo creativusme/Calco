@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, presets, tools
-from .bundle import BundleError
+from .bundle import BundleError, load_bundle
 from .export import export_model
 from .library import Library
 from .pairing import Pairing, encode_ip
@@ -41,6 +42,10 @@ class ExportRequest(BaseModel):
 class CheckRequest(BaseModel):
     done: bool | None = None
     note: str | None = None
+
+
+class ImportRequest(BaseModel):
+    name: str | None = None
 
 
 class CalibrateRequest(BaseModel):
@@ -205,10 +210,20 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
 
         if size not in LAYOUTS:
             raise HTTPException(400, f"size must be one of {list(LAYOUTS)}")
-        path = Path(tempfile.gettempdir()) / f"calco-mat-{size}-3d.zip"
+        path = Path(tempfile.gettempdir()) / f"calco-mat-{size}-3d-{__version__}-2.zip"  # new name when the files change
         if not path.exists():
             write_mat_3d(path, size)
         return FileResponse(path, media_type="application/zip", filename=f"calco-scan-mat-{size}-3d-print.zip")
+
+    @app.get("/api/markers.pdf")
+    def markers_pdf():
+        """Loose scale markers (60 mm) for parts too big for a mat."""
+        from .mat import write_markers_pdf
+
+        path = Path(tempfile.gettempdir()) / f"calco-markers-{__version__}.pdf"
+        if not path.exists():
+            write_markers_pdf(path)
+        return FileResponse(path, media_type="application/pdf", filename="calco-scale-markers.pdf")
 
     @app.post("/api/demo")
     def demo():
@@ -283,6 +298,41 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
             raise HTTPException(422, str(e)) from e
         return {"ok": True, "capture": summary}
 
+    # ---- import of photos / videos from elsewhere (the desktop uploads them one by one, then completes)
+    def import_dir(iid: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f-]{8,40}", iid):
+            raise HTTPException(400, "invalid import id")
+        return lib.incoming / f"import-{iid}"
+
+    @app.put("/api/import/{iid}/files/{name}")
+    async def import_file(iid: str, name: str, request: Request):
+        from .importer import PHOTO_EXT, VIDEO_EXT
+
+        safe = Path(name).name
+        if Path(safe).suffix.lower() not in PHOTO_EXT | VIDEO_EXT:
+            raise HTTPException(415, f"{safe}: not a photo or video Calco can read")
+        d = import_dir(iid)
+        d.mkdir(parents=True, exist_ok=True)
+        with (d / safe).open("wb") as fh:
+            async for chunk in request.stream():
+                fh.write(chunk)
+        return {"ok": True}
+
+    @app.post("/api/import/{iid}/complete")
+    def import_complete(iid: str, req: ImportRequest):
+        from .importer import make_bundle
+
+        d = import_dir(iid)
+        if not d.exists():
+            raise HTTPException(404, "nothing uploaded for this import")
+        try:
+            out = make_bundle(sorted(d.iterdir()), lib.captures, req.name or None, log=lambda m: None)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        return {"ok": True, "capture": load_bundle(out).summary()}
+
     # ---- jobs
     @app.get("/api/jobs")
     def jobs():
@@ -335,6 +385,19 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
         if not path.exists():
             raise HTTPException(404, "no model yet")
         return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/jobs/{jid}/report.pdf")
+    def report_pdf(jid: str):
+        from .report_pdf import write_report
+
+        j = job_or_404(jid)
+        d = lib.job_dir(jid)
+        if not (d / "report.json").exists() or not (d / "result" / "model.glb").exists():
+            raise HTTPException(409, "job has no result")
+        safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in j["capture_name"]).strip() or "scan"
+        out = write_report(d, d / "report.pdf", j["capture_name"], j["user_scale"])
+        return FileResponse(out, media_type="application/pdf", filename=f"{safe} report.pdf",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/jobs/{jid}/splat.ply")
     def splat(jid: str):

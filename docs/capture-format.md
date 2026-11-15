@@ -68,7 +68,7 @@ A part can be scanned upright and then turned over within one capture. Every fra
 
 ## Transfer protocol
 
-The engine advertises `_calco._tcp` on the local network (default port 7878). Upload is per file and resumable:
+The phone uploads to the engine on port 7878 (address from the pairing code, see `pairing.py`). Upload is per file and resumable:
 
 1. `GET  /api/captures/{id}/have` → `{ "files": { "frames/000001.jpg": 2481923, … } }` (sizes already received)
 2. `PUT  /api/captures/{id}/files/{path}` with the raw file body, for each missing or size-mismatched file. `manifest.json` goes last.

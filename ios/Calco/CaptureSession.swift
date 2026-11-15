@@ -119,6 +119,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         lastLensSwitch = Date()
         closeUp = false
         if let arConfig { session.run(arConfig) }
+        if exposureLocked { lockExposure() }  // the camera may come back on auto after the pause
         hint = "Back to LiDAR: point at the object for a moment while tracking resumes"
         haptic.impactOccurred(intensity: 1)
     }
@@ -138,6 +139,7 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         shotPositions.removeAll()
         coverage = [Bool](repeating: false, count: Self.sectors * 2)
         lastShot = nil
+        unlockExposure()  // the other side may face the light differently: lock again on Start
         hint = "Turn the part over, then Place box again and tap Start"
         haptic.impactOccurred(intensity: 1)
     }
@@ -176,13 +178,40 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func stop() {
+        unlockExposure()
         session.pause()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
     func toggleRecording() {
         isRecording.toggle()
-        if isRecording { lastShot = nil }
+        if isRecording {
+            lastShot = nil
+            lockExposure()
+        }
+    }
+
+    /// Same exposure and white balance in every photo: the photogrammetry matches pixels across
+    /// photos, and a part that changes brightness from one view to the next matches worse.
+    /// Locked at the values auto-exposure chose when recording starts; focus stays automatic.
+    private var exposureLocked = false
+
+    private func lockExposure() {
+        guard let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera,
+              (try? device.lockForConfiguration()) != nil else { return }
+        if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+        if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+        device.unlockForConfiguration()
+        exposureLocked = true
+    }
+
+    private func unlockExposure() {
+        guard exposureLocked, let device = ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera,
+              (try? device.lockForConfiguration()) != nil else { return }
+        if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+        if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { device.whiteBalanceMode = .continuousAutoWhiteBalance }
+        device.unlockForConfiguration()
+        exposureLocked = false
     }
 
     /// Finish the scan. Returns false (and deletes the bundle) when there are too few photos.

@@ -12,9 +12,10 @@ interface Props {
   mode: ViewMode;
   grid: boolean;
   theme: string;
-  /** When true, clicks on the model pick two points; the distance (model units, metres) is reported. */
+  /** When true, clicks on the model pick points (model units, metres); `picks` of them make a measurement. */
   measuring: boolean;
-  onMeasure: (metres: number | null) => void;
+  picks?: number;
+  onMeasure: (points: THREE.Vector3[]) => void;
 }
 
 interface Scene {
@@ -33,11 +34,13 @@ interface Scene {
 }
 
 /** three.js viewport: orbit, textured / clay / wireframe, ground grid in real units, two-point measure. */
-export function Viewer({ url, splatUrl, mode, grid, theme, measuring, onMeasure }: Props) {
+export function Viewer({ url, splatUrl, mode, grid, theme, measuring, picks = 2, onMeasure }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const state = useRef<Scene | null>(null);
   const measuringRef = useRef(measuring);
   const onMeasureRef = useRef(onMeasure);
+  const picksRef = useRef(picks);
+  picksRef.current = picks;
   measuringRef.current = measuring;
   onMeasureRef.current = onMeasure;
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -95,10 +98,10 @@ export function Viewer({ url, splatUrl, mode, grid, theme, measuring, onMeasure 
       ray.setFromCamera(ndc, camera);
       const hit = ray.intersectObject(s.model, true)[0];
       if (!hit) return;
-      if (s.points.length === 2) s.points = [];
+      if (s.points.length >= picksRef.current) s.points = [];
       s.points.push(hit.point.clone());
       drawMarks(s);
-      onMeasureRef.current(s.points.length === 2 ? s.points[0].distanceTo(s.points[1]) : null);
+      onMeasureRef.current([...s.points]);
     };
     renderer.domElement.addEventListener("pointerdown", onDown);
     renderer.domElement.addEventListener("pointerup", onUp);
@@ -199,13 +202,13 @@ export function Viewer({ url, splatUrl, mode, grid, theme, measuring, onMeasure 
     return () => { cancelled = true; };
   }, [mode, splatUrl, status]);
 
-  // leaving measure mode clears the picked points
+  // leaving measure mode, or switching between distance and diameter, clears the picked points
   useEffect(() => {
     const s = state.current;
-    if (!s || measuring) return;
+    if (!s) return;
     s.points = [];
     drawMarks(s);
-  }, [measuring]);
+  }, [measuring, picks]);
 
   return (
     <div className={`viewer ${measuring ? "is-measuring" : ""}`} ref={host}>
@@ -226,10 +229,28 @@ function drawMarks(s: Scene) {
     dot.renderOrder = 10;
     s.marks.add(dot);
   }
-  if (s.points.length === 2) {
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(s.points), new THREE.LineBasicMaterial({ color: 0xd2f24a, depthTest: false }));
+  const ring = s.points.length === 3 ? circleThrough(s.points[0], s.points[1], s.points[2]) : null;
+  const path = ring ? ring.outline : s.points.length === 2 ? s.points : null;
+  if (path) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(path), new THREE.LineBasicMaterial({ color: 0xd2f24a, depthTest: false }));
     line.renderOrder = 10;
     s.marks.add(line);
   }
   s.render();
+}
+
+/** The circle through three points (a hole edge, a shaft): centre, radius and a drawable outline. */
+export function circleThrough(p1: THREE.Vector3, p2: THREE.Vector3, p3: THREE.Vector3) {
+  const a = p1.clone().sub(p3), b = p2.clone().sub(p3);
+  const axb = a.clone().cross(b);
+  const d = 2 * axb.lengthSq();
+  if (d < 1e-18) return null; // the points are on a line
+  const centre = b.clone().multiplyScalar(a.lengthSq()).sub(a.clone().multiplyScalar(b.lengthSq())).cross(axb).divideScalar(d).add(p3);
+  const radius = centre.distanceTo(p1);
+  const u = p1.clone().sub(centre).normalize(), v = axb.clone().normalize().cross(u);
+  const outline = Array.from({ length: 65 }, (_, i) => {
+    const t = (i / 64) * Math.PI * 2;
+    return centre.clone().addScaledVector(u, Math.cos(t) * radius).addScaledVector(v, Math.sin(t) * radius);
+  });
+  return { centre, radius, outline };
 }

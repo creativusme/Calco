@@ -308,3 +308,76 @@ def write_mat_3d(path: str | Path, size: str = "A5") -> Path:
         for name, data in mat_3d_files(size).items():
             z.writestr(name, data)
     return path
+
+
+# ---- loose scale markers: single tags of known size for parts too big for a mat
+MARKER_MM = 60.0  # black square of each marker, printed at 100%
+MARKER_SHEETS = 2  # 6 markers per A4 sheet
+MARKER_FIRST_ID = 400  # clear of every mat layout
+
+
+def marker_ids() -> range:
+    return range(MARKER_FIRST_ID, MARKER_FIRST_ID + 6 * MARKER_SHEETS)
+
+
+def render_markers(sheet: int = 0, dpi: int = 300) -> np.ndarray:
+    """A4 page of 6 markers (2 x 3), each with a white border and cut marks."""
+    px = dpi / 25.4
+    img = np.full((round(297 * px), round(210 * px)), 255, np.uint8)
+    side = round(MARKER_MM * px)
+    for k in range(6):
+        tid = MARKER_FIRST_ID + sheet * 6 + k
+        cx, cy = (52.5 + 105.0 * (k % 2)) * px, (52.0 + 92.0 * (k // 2)) * px
+        x, y = round(cx - side / 2), round(cy - side / 2)
+        img[y:y + side, x:x + side] = cv2.aruco.generateImageMarker(_DICT, tid, side)
+        cut = round(12 * px)  # cut line 12 mm outside the black square: the white border tags need
+        cv2.rectangle(img, (x - cut, y - cut), (x + side + cut, y + side + cut), 170, max(1, round(0.2 * px)))
+        cv2.putText(img, f"Calco marker {tid}  -  {MARKER_MM:.1f} mm", (x - cut + round(2 * px), y + side + cut - round(2 * px)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.07 * px, 0, max(1, round(0.1 * px)), cv2.LINE_AA)
+    fy, bx0 = 282 * px, 10 * px
+    lw = max(1, round(0.3 * px))
+    cv2.line(img, (round(bx0), round(fy)), (round(bx0 + 100 * px), round(fy)), 0, lw)
+    for bx in (bx0, bx0 + 100 * px):
+        cv2.line(img, (round(bx), round(fy - 2 * px)), (round(bx), round(fy + 2 * px)), 0, lw)
+    cv2.putText(img, "bar = 100.0 mm  -  print at 100%  -  cut along the grey lines, keep the white border",
+                (round(bx0), round(fy - 3 * px)), cv2.FONT_HERSHEY_SIMPLEX, 0.075 * px, 0, max(1, round(0.11 * px)), cv2.LINE_AA)
+    return img
+
+
+def write_markers_pdf(path: str | Path, dpi: int = 300) -> Path:
+    from PIL import Image
+
+    path = Path(path)
+    pages = [Image.fromarray(render_markers(s, dpi)) for s in range(MARKER_SHEETS)]
+    pages[0].save(path, "PDF", resolution=float(dpi), save_all=True, append_images=pages[1:])
+    return path
+
+
+@dataclass
+class MarkerFit:
+    scale: float  # metres per reconstruction unit
+    markers: int
+    spread_pct: float  # how much the markers disagree (1 sigma): bent or badly printed markers show here
+
+
+def fit_markers(observations: list[dict[int, np.ndarray]], projections: list[np.ndarray],
+                print_scale: float = 1.0) -> MarkerFit | None:
+    """Scale from loose markers: each one's triangulated sides against its printed size."""
+    per_marker = []
+    for tid in marker_ids():
+        views = [i for i, obs in enumerate(observations) if tid in obs]
+        if len(views) < 3:
+            continue
+        pts = np.array([triangulate_dlt([projections[i] for i in views],
+                                        np.array([observations[i][tid][k] for i in views])) for k in range(4)])
+        if not np.all(np.isfinite(pts)):
+            continue
+        sides = np.linalg.norm(pts - np.roll(pts, -1, axis=0), axis=1)
+        if sides.min() <= 0 or sides.max() / sides.min() > 1.15:  # badly seen or not flat
+            continue
+        per_marker.append(MARKER_MM * print_scale / 1000.0 / float(np.mean(sides)))
+    if not per_marker:
+        return None
+    s = np.array(per_marker)
+    spread = float(np.std(s) / np.mean(s) * 100.0) if len(s) > 1 else 0.5
+    return MarkerFit(float(np.median(s)), len(s), spread)

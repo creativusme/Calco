@@ -111,6 +111,10 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 14px; he
 .capture-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
 .sidebar-foot { display: grid; gap: 10px; padding: 12px 14px 14px; border-top: 1px solid var(--line); }
 .sidebar-foot .button.wide { margin: 0; }
+.import { padding: 12px 14px 0; border-top: 1px solid var(--line); }
+.import .button.wide { margin: 0; }
+.import .error-text { margin: 6px 0 0; }
+.import + .sidebar-foot { border-top: 0; }
 .status-line { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 12px; }
 .kv dt { color: var(--muted); }
@@ -156,7 +160,10 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 14px; he
   border: 1px solid var(--line-strong); border-radius: var(--r); font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .readout i { margin-right: 7px; font-style: normal; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-text); }
 .readout-measure { font-family: var(--ui); gap: 12px; }
-.readout-measure > span:first-child { font-family: var(--mono); }
+.readout-measure > span:nth-child(2) { font-family: var(--mono); }
+.segmented { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r); }
+.segmented button { padding: 3px 9px; color: var(--muted); border-radius: 0; font-weight: 500; }
+.segmented button[aria-pressed="true"] { color: var(--accent-text); background: var(--hover); }
 .inline-field { display: flex; align-items: center; gap: 8px; }
 .inline-field input { width: 84px; height: 26px; }
 .readout .button { min-height: 26px; }

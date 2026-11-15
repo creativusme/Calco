@@ -65,6 +65,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **D3c** **Lente ravvicinata automatica**: durante la scansione avvicinati molto a un dettaglio (meno di ~20 cm). Dopo mezzo secondo senti una vibrazione e compare la scritta lime *Close-up lens · LiDAR paused*: ora scatta con la lente che mette a fuoco da vicino. Quando ti allontani torna da solo al LiDAR (altra vibrazione), con box e anello di copertura come prima. Il pulsante **LiDAR** in basso a sinistra fa tornare subito.
 - ☐ **D3d** Durante la parte ravvicinata il LiDAR è in pausa (limite di iPhone: LiDAR e lente macro non funzionano insieme). Gira attorno al dettaglio a piccoli passi; il PC colloca quelle foto usando le foto normali, quindi **fai sempre anche il giro normale attorno all'oggetto**.
 - ☐ **D3e** **Flip** (pezzi da scansionare sopra e sotto, es. griglie): finito un lato, metti in pausa → **Flip: scan the other side**. In alto compare *Side 2*, la copertura riparte da zero e la box sparisce: gira il pezzo, **Place box**, **Start**. Sul PC la scansione viene elaborata lato per lato e unita da sola (in **Result**: *Sides overlap* e *Sides distance*).
+- ☐ **D3f** (app 0.5) Dopo **Start** la luminosità e i colori dell'immagine non cambiano più girando attorno all'oggetto (esposizione e bilanciamento del bianco bloccati). Dopo **Flip** si sbloccano e al nuovo **Start** si fissano di nuovo.
 - ☐ **D4** Muoviti troppo in fretta: compare **Slow down** e smette di scattare. Rallenta: riprende.
 - ☐ **D5** Fai un giro completo ad altezza oggetto, poi un secondo giro dall'alto (~45°). L'anello di copertura in alto si riempie di verde (anello interno = giro basso, esterno = giro alto).
 - ☐ **D6** Puntini bianchi restano sospesi nei punti da cui hai scattato.
@@ -113,6 +114,17 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **F9** Al primo avvio della nuova versione, in alto compare l'installazione automatica del *Surfel engine* (circa 3 GB, una volta sola). Finita quella, in **Process** (qualità Medium o superiore) compare la casella **Gaussian splat**.
 - ☐ **F10** Elabora in **High** con **Gaussian splat** spuntato. Nel risultato compare il pulsante **Splat**: la vista è fotorealistica e coincide con la mesh (passando da Splat a Clay il pezzo non si sposta).
 - ☐ **F11** Un risultato elaborato **senza Colour texture** si apre in **Clay** e non mostra il pulsante **Texture**.
+
+## F4. Misure, CAD e report
+
+- ☐ **F12** **Measure → Diameter**: tre clic sul bordo di un foro. Il diametro mostrato è entro ~0,5 mm dal calibro (fori da 5 mm in su, scansione High).
+- ☐ **F13** Export profilo **CAD (Fusion)** con **DXF**: in Fusion *Inserisci → Inserisci DXF*, scegli un layer `Z_…` (sezione orizzontale a quell'altezza) o `X_MID` / `Y_MID`. Le quote della sezione corrispondono al pezzo.
+- ☐ **F14** **Export → PDF Report**: una pagina con quattro viste, dimensioni e precisione, leggibile e stampabile.
+
+## F5. Import e pezzi grandi
+
+- ☐ **F15** **Import Photos or Video…** (in basso a sinistra): scegli 30–100 foto di un oggetto fatte con un'altra fotocamera (o un video di un giro di 30–60 s). Compare una nuova cattura; elaborala in **Medium**. Senza tappetino la scala va data col calibro.
+- ☐ **F16** Pezzo grande (~1 m): **Scan Mat → Markers PDF**, stampa al 100%, ritaglia i marker lasciando il bordo bianco, mettine 3–4 piatti attorno al pezzo. Nel risultato **Scale from: Markers** e lo *spread* sotto ~0,5%.
 
 ## G. Casi difficili (uno alla volta, annota il risultato)
 

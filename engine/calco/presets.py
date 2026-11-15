@@ -57,13 +57,14 @@ PROFILES = {
     for p in (
         ExportProfile("print", "3D print", "Closed mesh in millimetres, no texture.", ("stl", "3mf"), "mm", False),
         ExportProfile("blender", "Blender / render", "Textured mesh in metres.", ("glb", "obj"), "m", True),
-        ExportProfile("cad", "CAD (Fusion)", "Clean mesh in millimetres for reverse engineering.", ("obj", "stl"), "mm", False),
+        ExportProfile("cad", "CAD (Fusion)", "Mesh in millimetres plus DXF cross-sections to sketch on.",
+                      ("obj", "stl", "dxf"), "mm", False),
         ExportProfile("web", "Web / AR", "Single-file GLB.", ("glb",), "m", True),
         ExportProfile("points", "Point cloud", "Coloured vertices as PLY.", ("ply",), "m", False),
     )
 }
 
-EXPORT_FORMATS = ("glb", "obj", "stl", "3mf", "ply")
+EXPORT_FORMATS = ("glb", "obj", "stl", "3mf", "ply", "dxf")
 UNIT_SCALE = {"m": 1.0, "cm": 100.0, "mm": 1000.0}
 
 

@@ -18,7 +18,8 @@ export interface Report {
   photos?: { dropped_blurry: number[]; used: number };
   combined?: { overlap_pct: number; distance_mm: number };
   scale: {
-    source: "mat" | "lidar" | "none";
+    source: "mat" | "markers" | "lidar" | "none";
+    markers?: { count: number; spread_pct: number } | null;
     mat: { layout: string; tags: number; fit_rms_mm: number } | null;
     lidar_vs_mat_pct: number | null;
     scale_error_pct: number | null;
@@ -118,6 +119,7 @@ export const api = {
   deleteJob: (id: string) => call(`/api/jobs/${id}`, { method: "DELETE" }),
   log: (id: string) => fetch(`${BASE}/api/jobs/${id}/log`).then((r) => r.text()),
   modelUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/model.glb`,
+  reportUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/report.pdf`,
   splatUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/splat.ply`,
   calibrate: (id: string, scale: number) => post<Job>(`/api/jobs/${id}/calibrate`, { scale }),
   exportJob: (id: string, formats: string[], units: string | null, textured: boolean) =>
@@ -126,11 +128,15 @@ export const api = {
   reveal: (id: string) => post(`/api/jobs/${id}/reveal`),
   matUrl: (size: string) => `${BASE}/api/mat.pdf?size=${size}`,
   mat3dUrl: (size: string) => `${BASE}/api/mat.zip?size=${size}`,
+  markersUrl: () => `${BASE}/api/markers.pdf`,
   demo: () => post<{ started: boolean }>("/api/demo"),
   recheckNetwork: () => post("/api/network/recheck"),
   checklist: () => call<ChecklistData>("/api/checklist"),
   check: (id: string, body: { done?: boolean; note?: string }) => post(`/api/checklist/${encodeURIComponent(id)}`, body),
   pairing: () => call<{ codes: { address: string; code: string }[]; pin: string; port: number }>("/api/pairing"),
   newPin: () => post<{ pin: string }>("/api/pairing/new"),
+  importFile: (iid: string, file: File) =>
+    call<{ ok: boolean }>(`/api/import/${iid}/files/${encodeURIComponent(file.name)}`, { method: "PUT", body: file }),
+  importComplete: (iid: string, name: string | null) => post<{ capture: Capture }>(`/api/import/${iid}/complete`, { name }),
   installTools: () => post<{ started: boolean }>("/api/tools/install"),
 };

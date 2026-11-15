@@ -12,7 +12,7 @@ from .presets import EXPORT_FORMATS, UNIT_SCALE
 Y_UP_TO_Z_UP = np.array([[1.0, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
 # formats whose users expect +Y up (DCC tools); the others are written +Z up (CAD, slicers)
 Y_UP_FORMATS = {"glb", "obj"}
-DEFAULT_UNITS = {"glb": "m", "obj": "m", "ply": "m", "stl": "mm", "3mf": "mm"}
+DEFAULT_UNITS = {"glb": "m", "obj": "m", "ply": "m", "stl": "mm", "3mf": "mm", "dxf": "mm"}
 
 
 def load_model(result_dir: Path) -> trimesh.Trimesh:
@@ -37,7 +37,10 @@ def export_model(result_dir: Path, out_dir: Path, name: str, fmt: str, units: st
 
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{name}.{fmt}"
-    if fmt == "ply":
+    if fmt == "dxf":
+        path = out_dir / f"{name}-sections.dxf"
+        write_sections_dxf(trimesh.Trimesh(mesh.vertices, mesh.faces, process=False), path, units)
+    elif fmt == "ply":
         colored = trimesh.Trimesh(mesh.vertices, mesh.faces, vertex_colors=mesh.visual.to_color().vertex_colors,
                                   process=False)
         colored.export(path)
@@ -47,4 +50,41 @@ def export_model(result_dir: Path, out_dir: Path, name: str, fmt: str, units: st
         solid.export(path)
     else:
         mesh.export(path)
+    return path
+
+
+def _nice_step(span: float, count: int = 10) -> float:
+    raw = span / count
+    mag = 10 ** np.floor(np.log10(raw))
+    return float(min((m * mag for m in (1, 2, 5, 10)), key=lambda v: abs(v - raw)))
+
+
+def write_sections_dxf(mesh: trimesh.Trimesh, path: Path, units: str = "mm") -> Path:
+    """Cross-sections as 2D lines for CAD sketches (Fusion: Insert > DXF, pick a layer).
+
+    Layers: Z_<height> (horizontal slices at round heights, seen from above), and X_MID / Y_MID
+    (vertical sections through the middle, drawn in their own plane: X_MID uses (y, z), Y_MID (x, z)).
+    """
+    lo, hi = mesh.bounds
+    step = _nice_step(hi[2] - lo[2])
+    cuts = []  # (layer, origin, normal, which 2 coordinates to draw)
+    for z in np.arange(np.ceil(lo[2] / step) * step, hi[2], step):
+        if lo[2] < z < hi[2]:
+            cuts.append((f"Z_{z:g}", [0, 0, z], [0, 0, 1], (0, 1)))
+    mid = (lo + hi) / 2
+    cuts += [("X_MID", [mid[0], 0, 0], [1, 0, 0], (1, 2)), ("Y_MID", [0, mid[1], 0], [0, 1, 0], (0, 2))]
+    code = {"m": 6, "cm": 5, "mm": 4}[units]
+    out = ["0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009", "9", "$INSUNITS", "70", str(code),
+           "0", "ENDSEC",
+           "0", "SECTION", "2", "TABLES", "0", "TABLE", "2", "LAYER", "70", str(len(cuts))]
+    for k, (layer, *_ ) in enumerate(cuts):
+        out += ["0", "LAYER", "2", layer, "70", "0", "62", str(1 + k % 7), "6", "CONTINUOUS"]
+    out += ["0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"]
+    for layer, origin, normal, (a, b) in cuts:
+        segs = trimesh.intersections.mesh_plane(mesh, np.array(normal, float), np.array(origin, float))
+        for p, q in segs:
+            out += ["0", "LINE", "8", layer, "10", f"{p[a]:.4f}", "20", f"{p[b]:.4f}", "30", "0",
+                    "11", f"{q[a]:.4f}", "21", f"{q[b]:.4f}", "31", "0"]
+    out += ["0", "ENDSEC", "0", "EOF"]
+    path.write_text("\n".join(out) + "\n", encoding="ascii")
     return path

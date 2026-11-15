@@ -100,6 +100,18 @@ def test_exports(draft_job):
     obj = trimesh.load(job / "exports" / "part.obj", force="mesh")
     assert abs(obj.extents[1] * 1000 - report["model"]["dimensions_mm"][2]) < 0.05  # metres, Y up
 
+    # DXF sections in millimetres: horizontal slices plus the two middle sections
+    dxf = export_model(job / "result", job / "exports", "part", "dxf").read_text().split("\n")
+    layers = {dxf[i + 1] for i, v in enumerate(dxf) if v == "8"}
+    assert {"X_MID", "Y_MID"} <= layers and sum(name.startswith("Z_") for name in layers) >= 5
+    xs = [float(dxf[i + 1]) for i in range(len(dxf) - 1) if dxf[i] in ("10", "11")]
+    assert abs(max(xs) - min(xs) - report["model"]["dimensions_mm"][0]) < 5  # widest section ~ the part
+
+    from calco.report_pdf import write_report
+
+    pdf = write_report(job, job / "report.pdf", "Synthetic part")
+    assert pdf.read_bytes()[:5] == b"%PDF-" and pdf.stat().st_size > 20_000
+
 
 def test_mesh_cleanup_ops():
     import open3d as o3d
@@ -293,3 +305,66 @@ def test_two_sided_scan_is_combined(tmp_path):
     assert report["combined"]["overlap_pct"] > 40
     assert all(abs(d - t) < 10 for d, t in zip(dims, sorted(TRUE_MM))), dims  # LiDAR: within 1 cm
     assert (tmp_path / "job" / "result" / "side2.ply").exists()
+
+
+def test_import_photos_and_video(bundle_dir, tmp_path):
+    import cv2
+    from fastapi.testclient import TestClient
+
+    from calco.library import Library
+    from calco.server import create_app
+
+    frames = sorted((bundle_dir / "frames").glob("*.jpg"))
+    video = tmp_path / "turn.mp4"
+    first = cv2.imread(str(frames[0]))
+    vw = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 10, (first.shape[1], first.shape[0]))
+    for f in frames:
+        for _ in range(5):  # 5 video frames per photo: the importer keeps about 2 per second
+            vw.write(cv2.imread(str(f)))
+    vw.release()
+
+    lib = Library(tmp_path / "lib")
+    client = TestClient(create_app(lib))
+    iid = "0f8e3a1c-1111-2222-3333-444455556666"
+    for p in frames[:5] + [video]:
+        assert client.put(f"/api/import/{iid}/files/{p.name}", content=p.read_bytes()).status_code == 200
+    assert client.put(f"/api/import/{iid}/files/notes.txt", content=b"x").status_code == 415
+    r = client.post(f"/api/import/{iid}/complete", json={"name": "Imported part"})
+    assert r.status_code == 200, r.text
+    cap = r.json()["capture"]
+    assert cap["name"] == "Imported part" and not cap["has_poses"] and not cap["has_depth"]
+    b = load_bundle(lib.capture_path(cap["id"]))
+    assert b.mode == "import" and len(b.frames) == 5 + 20  # 100 video frames at 10 fps: 2 per second kept
+    assert not (lib.incoming / f"import-{iid}").exists()
+
+
+def test_scale_markers():
+    from calco.mat import MARKER_MM, detect_tags, fit_markers, render_markers
+
+    page = render_markers(0, dpi=150)
+    assert set(detect_tags(page)) == set(range(400, 406))
+
+    # three markers flat on the floor, a reconstruction 1/0.7 too big: the fit must give 0.7
+    rng = np.random.default_rng(3)
+    half = MARKER_MM / 2000.0
+    square = np.array([[-half, 0, -half], [half, 0, -half], [half, 0, half], [-half, 0, half]])
+    markers = {400 + k: square + [0.4 * k - 0.4, 0, 0.3 * (k % 2)] for k in range(3)}
+    K = np.array([[1000.0, 0, 640], [0, 1000.0, 480], [0, 0, 1]])
+    obs, projections = [], []
+    for k in range(8):
+        a = 2 * np.pi * k / 8
+        eye = np.array([1.2 * np.cos(a), 1.0, 1.2 * np.sin(a)])
+        f = -eye / np.linalg.norm(eye)
+        r = np.cross(f, [0, 1.0, 0]); r /= np.linalg.norm(r)
+        d = np.cross(f, r)
+        R = np.stack([r, d, f])  # OpenCV camera: x right, y down, z forward
+        P = K @ np.hstack([R, (-R @ eye)[:, None]])
+        seen = {}
+        for tid, pts in markers.items():
+            uv = (P @ np.c_[pts, np.ones(4)].T).T
+            seen[tid] = uv[:, :2] / uv[:, 2:] + rng.normal(0, 0.2, (4, 2))
+        obs.append(seen)
+        S = np.diag([1 / 0.7] * 3 + [1.0])  # same cameras in a frame 1/0.7 larger
+        projections.append(P @ np.linalg.inv(S))
+    fit = fit_markers(obs, projections)
+    assert fit.markers == 3 and abs(fit.scale - 0.7) < 0.7 * 0.003

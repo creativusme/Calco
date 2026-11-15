@@ -43,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("out", type=Path)
     m.add_argument("--size", default="A4", choices=["A5", "A4", "A3"])
     m.add_argument("--print3d", action="store_true", help="write a zip of STL files for a 3D-printed mat")
+    m.add_argument("--markers", action="store_true", help="write the loose 60 mm scale markers (for big parts)")
+
+    i = sub.add_parser("import", help="make a capture from photos and/or videos (a folder or files)")
+    i.add_argument("paths", type=Path, nargs="+")
+    i.add_argument("--library", type=Path, default=None, help="library folder (default: the usual one)")
+    i.add_argument("--name", default=None)
 
     t = sub.add_parser("tools", help="external tools: OpenMVS, and COLMAP with CUDA for the GPU")
     t.add_argument("action", choices=["install", "install-gpu", "status"],
@@ -82,14 +88,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAILED: {ex}", file=sys.stderr)
             return 1
         print(json.dumps({k: report.get(k) for k in ("combined", "model", "seconds")}, indent=1))
+    elif a.cmd == "import":
+        from .importer import make_bundle
+        from .library import Library
+
+        files = [f for p in a.paths for f in (sorted(p.iterdir()) if p.is_dir() else [p])]
+        lib = Library(a.library) if a.library else Library()
+        print(make_bundle(files, lib.captures, a.name))
     elif a.cmd == "synth":
         from .synth import make_synthetic_bundle
 
         print(make_synthetic_bundle(a.out, views_per_ring=a.views))
     elif a.cmd == "mat":
-        from .mat import write_mat_3d, write_mat_pdf
+        from .mat import write_markers_pdf, write_mat_3d, write_mat_pdf
 
-        print(write_mat_3d(a.out, a.size) if a.print3d else write_mat_pdf(a.out, a.size))
+        print(write_markers_pdf(a.out) if a.markers else
+              write_mat_3d(a.out, a.size) if a.print3d else write_mat_pdf(a.out, a.size))
     elif a.cmd == "tools":
         from . import tools
 
