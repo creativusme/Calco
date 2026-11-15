@@ -123,7 +123,7 @@ function SidebarFooter({ info, offline }: { info: Info | null; offline: boolean 
           <div className="menu-row">
             {["A5", "A4", "A3"].map((s) => <a key={s} className="button" href={api.matUrl(s)}>{s}</a>)}
           </div>
-          <div className="label">3D print (STL, two colours)</div>
+          <div className="label">3D print (3MF for AMS + STL, two colours)</div>
           <div className="menu-row">
             {["A5", "A4"].map((s) => <a key={s} className="button" href={api.mat3dUrl(s)}>{s}</a>)}
           </div>
@@ -277,6 +277,10 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
   const [distance, setDistance] = useState<number | null>(null);
   const [showLog, setShowLog] = useState(false);
   const hasModel = !!job?.has_model && job.state === "done";
+  // results processed without colour texture are plain white: show them as clay, no Texture button
+  const coloured = job?.report?.model.textured ?? job?.options.texture !== false;
+  const hasSplat = !!job?.report?.model.splat;
+  const view: ViewMode = (!coloured && mode === "textured") || (!hasSplat && mode === "splat") ? "clay" : mode;
   const [tab, setTab] = useState<Tab>(hasModel ? "result" : "process");
 
   // show the result as soon as a job finishes
@@ -337,10 +341,10 @@ function CaptureView({ capture, captures, info, theme, refresh, onDeleted }: {
         <div className="viewport">
           {hasModel && job ? (
             <>
-              <Viewer url={api.modelUrl(job)} mode={mode} grid={grid} theme={theme} measuring={measuring} onMeasure={setDistance} />
+              <Viewer url={api.modelUrl(job)} splatUrl={hasSplat ? api.splatUrl(job) : null} mode={view} grid={grid} theme={theme} measuring={measuring} onMeasure={setDistance} />
               <div className="toolbar" role="toolbar" aria-label="View">
-                {(["textured", "clay", "wire"] as ViewMode[]).map((m) => (
-                  <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>{{ textured: "Texture", clay: "Clay", wire: "Wire" }[m]}</button>
+                {([...(hasSplat ? ["splat"] : []), ...(coloured ? ["textured"] : []), "clay", "wire"] as ViewMode[]).map((m) => (
+                  <button key={m} aria-pressed={view === m} onClick={() => setMode(m)}>{{ splat: "Splat", textured: "Texture", clay: "Clay", wire: "Wire" }[m]}</button>
                 ))}
                 <span className="sep" aria-hidden="true" />
                 <button aria-pressed={grid} onClick={() => setGrid(!grid)}>Grid</button>
@@ -563,6 +567,7 @@ function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture
   const [closeBottom, setCloseBottom] = useState(true);
   const [texture, setTexture] = useState(true);
   const [dropBlurry, setDropBlurry] = useState(true);
+  const [splat, setSplat] = useState(false);
   const [method, setMethod] = useState("auto");
   const [bar, setBar] = useState("100.0");
   const [error, setError] = useState<string | null>(null);
@@ -576,7 +581,7 @@ function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture
     try {
       const printScale = Number(bar.replace(",", ".")) / 100;
       onStarted(await api.createJob(capture.id, {
-        quality, method, isolate, close_bottom: closeBottom, texture, drop_blurry: dropBlurry,
+        quality, method, isolate, close_bottom: closeBottom, texture, drop_blurry: dropBlurry, splat: splat && photo,
         print_scale: Number.isFinite(printScale) && printScale > 0.9 && printScale < 1.1 ? printScale : 1,
       }));
     } catch (e) {
@@ -600,6 +605,7 @@ function ProcessPanel({ capture, captures, info, onStarted }: { capture: Capture
       <label className="check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /><span>Isolate the object<small>Crop, remove the surface it stands on</small></span></label>
       <label className="check"><input type="checkbox" checked={closeBottom} disabled={!isolate} onChange={(e) => setCloseBottom(e.target.checked)} /><span>Flat closed base<small>Ready for 3D printing</small></span></label>
       <label className="check"><input type="checkbox" checked={texture} onChange={(e) => setTexture(e.target.checked)} /><span>Colour texture<small>Turn off for 3D printing: faster, geometry only</small></span></label>
+      {photo && info?.tools.splat && <label className="check"><input type="checkbox" checked={splat} onChange={(e) => setSplat(e.target.checked)} /><span>Gaussian splat<small>Photoreal 3D view on the GPU, adds 10–40 min</small></span></label>}
       <label className="check"><input type="checkbox" checked={dropBlurry} onChange={(e) => setDropBlurry(e.target.checked)} /><span>Skip blurred photos<small>Leaves out shaky or out-of-focus shots</small></span></label>
 
       <div className="field-row">

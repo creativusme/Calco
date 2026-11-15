@@ -39,6 +39,7 @@ class Options:
     print_scale: float = 1.0  # measured length of the mat's 100 mm bar / 100
     texture_size: int | None = None
     gpu: bool = True  # use the graphics card when the CUDA engine is installed
+    splat: bool = False  # also train a Gaussian splat (photoreal view) on the GPU
 
     @staticmethod
     def from_dict(d: dict | None) -> "Options":
@@ -54,6 +55,7 @@ STAGES = [
     ("geometry", "Build geometry"),
     ("cleanup", "Isolate object"),
     ("texture", "Texture"),
+    ("splat", "Gaussian splat"),
     ("finalize", "Write result"),
     ("combine", "Combine sides"),
 ]
@@ -78,7 +80,14 @@ def plan(bundle: Bundle, options: Options) -> dict:
         else:
             raise RuntimeError("Photogrammetry needs OpenMVS. Run: calco tools install")
     isolate = options.isolate and bundle.mode != "space"
-    return {"method": method, "isolate": isolate, "quality": quality.name, "notes": notes}
+    splat = False
+    if options.splat and method == "photo":
+        from .splat import available
+
+        splat = available()
+        if not splat:
+            notes.append("Gaussian splat skipped: it needs an NVIDIA GPU and the splat engine (installed automatically).")
+    return {"method": method, "isolate": isolate, "quality": quality.name, "notes": notes, "splat": splat}
 
 
 # How much of the total time each stage takes, measured on real captures (photogrammetry is
@@ -86,7 +95,7 @@ def plan(bundle: Bundle, options: Options) -> dict:
 # remaining-time estimate that move evenly instead of jumping stage by stage.
 STAGE_WEIGHTS = {
     "photo": {"ingest": 0.2, "select": 0.5, "align": 10, "scale": 0.5, "geometry": 75, "cleanup": 1,
-              "texture": 12, "finalize": 0.5, "combine": 5},
+              "texture": 12, "splat": 60, "finalize": 0.5, "combine": 5},
     "lidar": {"ingest": 0.2, "select": 0.5, "align": 1, "scale": 2, "geometry": 45, "cleanup": 2,
               "texture": 45, "finalize": 1},
 }
@@ -323,6 +332,8 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         skip.add("cleanup")
     if not options.texture:
         skip.add("texture")
+    if not (photo and options.splat and p["splat"]):
+        skip.add("splat")
     names = [n for n, _ in STAGES if n not in skip]
     job = Job(Path(job_dir), names, p["method"], forward)
     work = job.dir / "work"
@@ -353,7 +364,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
 
             job.start("align")
             sfm = run_sfm(bundle, work, quality, job.log, job.progress, options.gpu,
-                          photo_size=None if options.texture else quality.dense_size)
+                          photo_size=None if (options.texture or "splat" in names) else quality.dense_size)
             report["compute"] = {"features": sfm.computed_on, "dense": "cpu"}
             views = sfm.views
             report["warnings"] += sfm.warnings
@@ -459,6 +470,15 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             tm = bake_texture(mesh, tex_views, min(tex_size, 4096), job.progress)
             job.done()
 
+        # ---- Gaussian splat (for viewing; the mesh still comes from the depth maps)
+        splat_dir = None
+        if "splat" in names:
+            from .splat import train
+
+            job.start("splat")
+            splat_dir = train(sfm.dense_dir, work, quality, crop if metric else None, job.log, job.progress)
+            job.done()
+
         # ---- finalize: move into the model frame, centred on the object
         job.start("finalize")
         vm = transform_points(frame.M, np.asarray(tm.vertices))
@@ -475,6 +495,12 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
         glb = tm.copy()
         glb.apply_transform(Z_UP_TO_Y_UP)
         glb.export(out / "model.glb")
+        if splat_dir is not None:  # same frame as model.glb, so the viewer can swap between them
+            from .splat import transform_splat
+
+            n = transform_splat(splat_dir / "splat.ply", out / "splat.ply", Z_UP_TO_Y_UP @ final_M,
+                                crop if (metric and p["isolate"]) else None)
+            job.log(f"Gaussian splat: {n} splats")
 
         geo = Mesh(vm, np.asarray(tm.faces))
         dims = (vm.max(0) - vm.min(0)) * 1000.0
@@ -483,6 +509,7 @@ def run(bundle_path: str | Path, job_dir: str | Path, options: Options | None = 
             "dimensions_mm": [round(float(d), 2) for d in dims],
             "watertight": meshops.is_watertight(meshops.tidy(geo)),
             "textured": options.texture,
+            "splat": splat_dir is not None,
         }
         report["scale"] = _scale_report(frame, dims, views, photo, quality)
         report["seconds"] = round(time.time() - job.status["started"], 1)

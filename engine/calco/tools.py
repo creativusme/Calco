@@ -135,18 +135,85 @@ def install_colmap(log=print) -> Path:
     return root
 
 
+# Surfel / Gaussian splat engine: PyTorch + gsplat. gsplat publishes Windows wheels for Python 3.10
+# only, so it gets its own small Python next to the other tools (uv fetches it).
+SPLAT = {
+    "python": "3.10",
+    "torch": "torch==2.4.1",
+    "torch_index": "https://download.pytorch.org/whl/cu124",
+    "gsplat": "gsplat==1.5.3+pt24cu124",
+    "gsplat_index": "https://docs.gsplat.studio/whl",
+}
+
+
+def splat_python() -> Path | None:
+    exe = tools_dir() / "splat" / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return exe if exe.exists() and (tools_dir() / "splat" / "ready").exists() else None
+
+
+def install_splat(log=print) -> Path:
+    """Python 3.10 + PyTorch (CUDA) + gsplat in tools/splat. About 3 GB."""
+    global PROGRESS
+    import sys
+
+    root = tools_dir() / "splat"
+    if splat_python():
+        log(f"Surfel engine already installed in {root}")
+        return root
+    root.mkdir(parents=True, exist_ok=True)
+    uv = [sys.executable, "-m", "uv"]
+    if subprocess.run([*uv, "--version"], capture_output=True).returncode != 0:  # older installs lack uv
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=True, capture_output=True)
+    env = {**os.environ, "UV_PYTHON_INSTALL_DIR": str(root / "python")}
+
+    def uv_run(args: list[str], what: str, n: int) -> None:
+        global PROGRESS
+        PROGRESS = {"component": f"Surfel engine: {what}", "done": n, "total": 4}
+        log("$ uv " + " ".join(args))
+        r = subprocess.run([*uv, *args], env=env, capture_output=True, text=True, errors="replace")
+        for line in (r.stdout + r.stderr).splitlines()[-15:]:
+            log("  " + line)
+        if r.returncode != 0 and what != "Python":  # uv may fail on a version link it does not need
+            raise RuntimeError(f"Installing the surfel engine failed at {what}")
+
+    try:
+        uv_run(["python", "install", SPLAT["python"]], "Python", 0)
+        pythons = sorted((root / "python").glob(f"cpython-{SPLAT['python']}.*/python.exe"))
+        if not pythons:
+            raise RuntimeError("Python for the surfel engine was not installed")
+        venv = root / "venv"
+        uv_run(["venv", "--python", str(pythons[-1]), str(venv)], "environment", 1)
+        py = str(venv / "Scripts" / "python.exe")
+        uv_run(["pip", "install", "--python", py, SPLAT["torch"], "--index-url", SPLAT["torch_index"]],
+               "PyTorch (2.3 GB)", 2)
+        uv_run(["pip", "install", "--python", py, SPLAT["gsplat"], "numpy<2", "pillow", "packaging", "setuptools", "jaxtyping", "rich",
+                "--index-url", SPLAT["gsplat_index"], "--extra-index-url", "https://pypi.org/simple",
+                "--index-strategy", "unsafe-best-match"], "gsplat", 3)
+        check = subprocess.run([py, "-c", "import torch, gsplat; assert torch.cuda.is_available()"],
+                               capture_output=True, text=True)
+        if check.returncode != 0:
+            raise RuntimeError("The surfel engine does not see the GPU: " + check.stderr[-500:])
+        (root / "ready").write_text("ok")
+    finally:
+        PROGRESS = None
+    return root
+
+
 def missing() -> list[str]:
     """Components this computer should have but does not yet."""
     out = [] if have_openmvs() else ["openmvs"]
-    if not colmap_bin() and have_gpu():
-        out.append("colmap")
+    if have_gpu():
+        if not colmap_bin():
+            out.append("colmap")
+        if not splat_python():
+            out.append("splat")
     return out
 
 
 def install_all(log=print) -> None:
-    """Everything Calco needs on this computer: OpenMVS always, the CUDA engine when there is an NVIDIA GPU."""
+    """Everything Calco needs on this computer: OpenMVS always, the GPU engines when there is an NVIDIA GPU."""
     for name in missing():
-        (install_openmvs if name == "openmvs" else install_colmap)(log=log)
+        {"openmvs": install_openmvs, "colmap": install_colmap, "splat": install_splat}[name](log=log)
 
 
 _GLOG = re.compile(r"^[IWEF]\d{8} [\d:.]+\s+\d+ \S+\] ")  # COLMAP log prefix
@@ -187,7 +254,8 @@ def run_tool(exe: Path, args: list[str], cwd: Path, log=print, on_line=None) -> 
 
 
 def status() -> dict:
-    info = {"openmvs": have_openmvs(), "colmap_cuda": colmap_bin() is not None, "tools_dir": str(tools_dir()),
+    info = {"openmvs": have_openmvs(), "colmap_cuda": colmap_bin() is not None, "splat": splat_python() is not None,
+            "tools_dir": str(tools_dir()),
             "gpu": None}
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],

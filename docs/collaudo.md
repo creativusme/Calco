@@ -36,7 +36,7 @@ Scegli **una** delle due strade:
 
 **Strada 2 — tutto stampato in 3D**
 - ☐ **B1** Scarica lo zip **3D print** (A5 entra in un piatto 220 × 220; A4 serve un piatto da 300).
-- ☐ **B2** Due colori (AMS/MMU): `base.stl` bianco + `pattern.stl` nero, caricati come un unico oggetto. Un solo estrusore: `combined.stl` in bianco e cambio filamento a nero a 2,0 mm di altezza. **Filamento opaco**: quello lucido riflette e nasconde i marker.
+- ☐ **B2** Due colori (Bambu AMS / OrcaSlicer): apri `scan-mat-A5-two-colour.3mf`, deve comparire come un solo oggetto con base sul filamento 1 (bianco) e motivo sul filamento 2 (nero), senza assegnare niente a mano. Altri slicer: `base.stl` bianco + `pattern.stl` nero, caricati come un unico oggetto. Un solo estrusore: `combined.stl` in bianco e cambio filamento a nero a 2,0 mm di altezza. **Filamento opaco**: quello lucido riflette e nasconde i marker.
 
 In entrambi i casi:
 - ☐ **B3** Misura col calibro la barra di calibrazione: deve essere **100,0 mm**. Valore misurato: `______ mm`. Se non è 100,0 scrivilo nel campo **Mat bar (mm)** ogni volta che elabori.
@@ -108,6 +108,12 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 - ☐ **F7** Due scansioni dello stesso pezzo (es. fronte e retro), entrambe elaborate. Nella scheda **Process** di una delle due: **Combine with another side…** → scegli l'altra → **Combine Sides**. Il risultato è un modello unico chiuso; in **Export** trovi anche i due lati allineati separati (`side1.ply`, `side2.ply`) per rifiniture in un altro programma.
 - ☐ **F8** Controlla *Sides distance*: sotto ~1 mm i lati combaciano bene. Se l'app dice che si sovrappongono troppo poco, rifai le scansioni in modo che i bordi e i fianchi del pezzo si vedano in entrambe.
 
+## F3. Gaussian splat e vista
+
+- ☐ **F9** Al primo avvio della nuova versione, in alto compare l'installazione automatica del *Surfel engine* (circa 3 GB, una volta sola). Finita quella, in **Process** (qualità Medium o superiore) compare la casella **Gaussian splat**.
+- ☐ **F10** Elabora in **High** con **Gaussian splat** spuntato. Nel risultato compare il pulsante **Splat**: la vista è fotorealistica e coincide con la mesh (passando da Splat a Clay il pezzo non si sposta).
+- ☐ **F11** Un risultato elaborato **senza Colour texture** si apre in **Clay** e non mostra il pulsante **Texture**.
+
 ## G. Casi difficili (uno alla volta, annota il risultato)
 
 | Caso | Come | Esito / note |
@@ -116,6 +122,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 | ☐ Oggetto ~1 m (es. il tappo) | Senza tappetino o con più fogli attorno; box grande; 100–150 foto | |
 | ☐ Superficie lucida o nera | Prima senza niente, poi con spray opacizzante o pallini adesivi | |
 | ☐ Superficie liscia e uniforme | Pallini adesivi sparsi a caso | |
+| ☐ Griglia / reticolo a pareti sottili | Sotto il pezzo un fondo scuro e opaco (non il tappetino bianco), spray opacizzante, foto ravvicinate perpendicolari alla griglia oltre al giro normale. Pareti sotto ~2 mm restano al limite per la fotogrammetria da telefono | |
 | ☐ Pezzo di motore / metallo sporco | Luce diffusa, niente flash | |
 | ☐ Busto / persona seduta | Modalità **Person**, occhi chiusi, 2 giri, ~60 s | |
 | ☐ Esterno al sole | Preferisci ombra o cielo coperto; controlla le ombre nette nella texture | |
@@ -145,7 +152,7 @@ Oggetto consigliato: una scatola opaca e non lucida, 10–20 cm, di cui conosci 
 
 ## Cosa non c'è ancora (non cercarlo durante il collaudo)
 
-Anteprima 3D sul telefono · unione di due scansioni (sopra/sotto) · maschere AI per lo scontorno · Gaussian Splatting · import di foto/video esterni · export USDZ/FBX/STEP e sezioni DXF · report PDF del sopralluogo · finestra nativa Tauri (per ora l'interfaccia gira nel browser).
+Anteprima 3D sul telefono · maschere per lo scontorno · import di foto/video esterni · export USDZ/FBX/STEP e sezioni DXF · report PDF del sopralluogo · finestra nativa Tauri (per ora l'interfaccia gira nel browser).
 
 
 ## Nota sui risultati

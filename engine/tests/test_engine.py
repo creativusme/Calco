@@ -194,6 +194,52 @@ def test_printable_mat_files():
     assert np.allclose(base.extents, [148, 210, 2])
     assert pattern.bounds[0][2] < 2.0 < pattern.bounds[1][2] and pattern.extents[0] < 148
 
+    # two-colour 3MF: one object, two parts, filaments 1 and 2 (Bambu Studio / OrcaSlicer)
+    import zipfile
+
+    z = zipfile.ZipFile(io.BytesIO(files["scan-mat-A5-two-colour.3mf"]))
+    config = z.read("Metadata/model_settings.config").decode()
+    assert config.count("<part ") == 2 and 'key="extruder" value="2"' in config
+    model = trimesh.load(io.BytesIO(files["scan-mat-A5-two-colour.3mf"]), file_type="3mf", force="mesh")
+    assert np.allclose(model.extents[:2], [148, 210])
+
+
+def test_splat_follows_the_model_frame(tmp_path):
+    from scipy.spatial.transform import Rotation
+
+    from calco.splat import transform_splat
+
+    cols = (["x", "y", "z", "nx", "ny", "nz", "f_dc_0", "f_dc_1", "f_dc_2"] + [f"f_rest_{i}" for i in range(9)]
+            + ["opacity", "scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"])
+    rng = np.random.default_rng(0)
+    data = rng.normal(size=(50, len(cols))).astype("<f4")
+    q = Rotation.random(50, random_state=1).as_quat()  # x, y, z, w
+    data[:, -4:] = q[:, [3, 0, 1, 2]]
+    head = "ply\nformat binary_little_endian 1.0\nelement vertex 50\n" + "".join(f"property float {c}\n" for c in cols)
+    src = tmp_path / "in.ply"
+    src.write_bytes((head + "end_header\n").encode() + data.tobytes())
+    R = Rotation.from_euler("xyz", [0.3, -1.1, 2.0]).as_matrix()
+    T = np.eye(4)
+    T[:3, :3] = 2.0 * R
+    T[:3, 3] = [1, 2, 3]
+    assert transform_splat(src, tmp_path / "out.ply", T) == 50
+    raw = (tmp_path / "out.ply").read_bytes()
+    out = np.frombuffer(raw[raw.index(b"end_header\n") + 11:], "<f4").reshape(50, -1)
+    assert np.allclose(out[:, :3], data[:, :3] @ (2 * R).T + [1, 2, 3], atol=1e-4)
+    assert np.allclose(out[:, 19:22], data[:, 19:22] + np.log(2), atol=1e-5)
+    # each splat's axes are rotated with the model
+    before = Rotation.from_quat(data[:, -4:][:, [1, 2, 3, 0]]).as_matrix()
+    after = Rotation.from_quat(out[:, -4:][:, [1, 2, 3, 0]]).as_matrix()
+    assert np.allclose(after, R @ before, atol=1e-4)
+
+    # cropping to the region of interest keeps the file consistent
+    from calco.bundle import CropBox
+
+    kept = transform_splat(src, tmp_path / "crop.ply", T, CropBox(np.zeros(3), np.full(3, 1.0)))
+    raw = (tmp_path / "crop.ply").read_bytes()
+    assert 0 < kept < 50 and f"element vertex {kept}\n".encode() in raw
+    assert len(raw) - raw.index(b"end_header\n") - 11 == kept * len(cols) * 4
+
 
 def test_mixed_phone_and_closeup_photos(tmp_path):
     """Some photos with phone poses, some close-ups without (other lens, unknown intrinsics):

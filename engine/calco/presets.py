@@ -18,6 +18,8 @@ class Quality:
     dense_iterations: int = 3
     dense_views: int = 0  # photos that get a depth map (0 = all); the rest still help texturing
     refine: bool = False
+    splat_steps: int = 7000  # Gaussian splat training (optional, GPU)
+    splat_size: int = 1600  # longest side of the photos the splat is trained on
     target_faces: int = 300_000
     texture_size: int = 4096
 
@@ -29,13 +31,13 @@ QUALITY = {
                 target_faces=150_000, texture_size=2048),
         Quality("medium", "Medium", "Photogrammetry at 1000 px. A few minutes.", "photo",
                 sfm_image_size=1600, photo_size=2560, dense_size=1000, dense_iterations=3, dense_views=60,
-                target_faces=400_000, texture_size=4096),
+                splat_steps=7000, splat_size=1600, target_faces=400_000, texture_size=4096),
         Quality("high", "High", "Photogrammetry at 2000 px. The everyday choice for parts.", "photo",
                 sfm_image_size=2400, sfm_features=8000, photo_size=4096, dense_size=2000, dense_iterations=5, dense_views=120,
-                target_faces=1_000_000, texture_size=8192),
+                splat_steps=15000, splat_size=2000, target_faces=1_000_000, texture_size=8192),
         Quality("ultra", "Ultra", "Photogrammetry at 3200 px plus mesh refinement. Can take hours.", "photo",
                 sfm_image_size=3200, sfm_features=10000, photo_size=4096, dense_size=3200, dense_iterations=5,
-                refine=True, target_faces=2_500_000, texture_size=8192),
+                splat_steps=30000, splat_size=2400, refine=True, target_faces=2_500_000, texture_size=8192),
     )
 }
 

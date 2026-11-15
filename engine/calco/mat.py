@@ -239,11 +239,65 @@ def mat_3d_files(size: str = "A5", base_mm: float = 2.0, relief_mm: float = 0.6)
         "be 100.0 mm; if it is not, enter the measured value as 'Mat calibration bar' when processing.\n"
     )
     return {
+        f"scan-mat-{size}-two-colour.3mf": two_colour_3mf(f"Calco scan mat {size}", [
+            ("base (white)", base, 1, "#F2F2F2"), ("pattern (black)", pattern, 2, "#1A1A1A")]),
         "base.stl": base.export(file_type="stl"),
         "pattern.stl": pattern.export(file_type="stl"),
         "combined.stl": trimesh.util.concatenate([base, pattern]).export(file_type="stl"),
         "README.txt": readme.encode(),
     }
+
+
+def two_colour_3mf(name: str, parts: list) -> bytes:
+    """One printable object made of several parts, each already assigned to a filament.
+
+    parts: (part name, trimesh mesh in mm, filament number from 1, display colour "#RRGGBB").
+    Bambu Studio and OrcaSlicer read the per-part filament from Metadata/model_settings.config;
+    other 3MF readers still see one object with coloured parts.
+    """
+    import io
+    import zipfile
+    from xml.sax.saxutils import escape
+
+    objs, comps, settings = [], [], []
+    mats = "".join(f'<base name="{escape(n)}" displaycolor="{c}FF"/>' for n, _, _, c in parts)
+    for i, (pname, mesh, filament, _) in enumerate(parts):
+        oid = i + 1
+        v = "".join(f'<vertex x="{x:.4f}" y="{y:.4f}" z="{z:.4f}"/>' for x, y, z in mesh.vertices)
+        t = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in mesh.faces)
+        objs.append(f'<object id="{oid}" type="model" name="{escape(pname)}" pid="100" pindex="{i}">'
+                    f'<mesh><vertices>{v}</vertices><triangles>{t}</triangles></mesh></object>')
+        comps.append(f'<component objectid="{oid}"/>')
+        settings.append(f'  <part id="{oid}" subtype="normal_part">\n'
+                        f'   <metadata key="name" value="{escape(pname)}"/>\n'
+                        f'   <metadata key="extruder" value="{filament}"/>\n  </part>\n')
+    top = len(parts) + 1
+    model = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<model unit="millimeter" xml:lang="en-US" '
+             'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n'
+             f'<metadata name="Title">{escape(name)}</metadata>\n'
+             f'<resources><basematerials id="100">{mats}</basematerials>{"".join(objs)}'
+             f'<object id="{top}" type="model" name="{escape(name)}"><components>{"".join(comps)}</components></object>'
+             f'</resources>\n<build><item objectid="{top}"/></build>\n</model>\n')
+    config = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'
+              f' <object id="{top}">\n  <metadata key="name" value="{escape(name)}"/>\n'
+              f'  <metadata key="extruder" value="1"/>\n{"".join(settings)} </object>\n</config>\n')
+    types = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+             '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+             '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+             '<Default Extension="config" ContentType="text/xml"/></Types>\n')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+            'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>\n')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", types)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("3D/3dmodel.model", model)
+        z.writestr("Metadata/model_settings.config", config)
+    return buf.getvalue()
 
 
 def write_mat_3d(path: str | Path, size: str = "A5") -> Path:

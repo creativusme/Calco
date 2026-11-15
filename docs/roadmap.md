@@ -75,6 +75,26 @@ mesh. **Verified** on synthetic data: a turned-over part aligned to 0.2 mm (the 
 dimensions within the noise; a two-sided synthetic capture end to end (LiDAR). **Not yet** on a real part.
 The mat cannot be the common reference: it stays put while the part is turned.
 
+## Radiator grille (2026-11-15): where the detail is lost
+
+Beige plastic lattice, cells about 15 mm, walls about 1.5 mm, see-through onto a white mat and beige wood.
+Polycam (photo mode) on the same part gives a cleaner, smoother skin but does not open the cells either.
+What the Calco intermediate files show:
+
+- The COLMAP depth maps at 2000 px **do** see the walls (clearly in the close-ups).
+- Fusion keeps few points on the walls (geometric consistency drops most of them), and OpenMVS Delaunay
+  meshing then stretches a skin over the cells. That skin is what the user saw.
+- A TSDF of the same depth maps at 0.6 mm keeps the walls but is too noisy to be useful: the depth noise
+  on a uniform, see-through lattice is about the wall thickness.
+- OpenMVS RefineMesh on the same mesh makes it crumpled (photometric refinement fails on a repetitive
+  lattice), so it stays limited to Ultra.
+- Gaussian surfels (2DGS) give a photoreal splat; a mesh fused from their depth (short 3000-step test) was
+  not better than the depth-map mesh. The mesh stays on depth maps; the splat is an optional extra
+  (`splat.py`), secondary to the mesh by the owner's choice.
+
+Lattices with walls under about 2 mm are at the limit of phone photogrammetry; capture advice is in the
+field test sheet (dark matte background under the part, matte spray, perpendicular close-ups).
+
 ## Hardware notes (measured on the RTX 3060 + i3-12100F)
 
 - Real capture, 122 photos, High: 40 min, of which 31 min GPU depth maps at 2000 px (about 6.5 s per photo
@@ -106,6 +126,7 @@ raise quality from here are listed under "Next", and they need real captures to 
 4. **Merge two scans** of the same part (upright + flipped) using the mat or ICP.
 5. **Loose scale markers** for parts too big for a mat; **AI masks** (SAM2/BiRefNet, running locally) for objects that cannot sit on a plane.
 6. **Phone preview** (Object Capture on device) and notes/photos attached to a capture.
-7. **Import** photo folders and video; **Gaussian splatting** (gsplat) as a second output.
+7. **Import** photo folders and video. (Gaussian splat output: done, `splat.py` + `splat_train.py`, gsplat
+   2DGS in its own Python 3.10 environment because gsplat ships Windows wheels only for 3.10.)
 8. **CAD helpers**: section slices to DXF, plane/cylinder fitting, USDZ/FBX export, PDF site report.
 9. Tauri installer, engine bundled without a separate Python install.

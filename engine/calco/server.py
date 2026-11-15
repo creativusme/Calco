@@ -336,6 +336,14 @@ def create_app(library: Library | None = None, ui_dir: Path | None = None, usb=N
             raise HTTPException(404, "no model yet")
         return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/jobs/{jid}/splat.ply")
+    def splat(jid: str):
+        job_or_404(jid)
+        path = lib.job_dir(jid) / "result" / "splat.ply"
+        if not path.exists():
+            raise HTTPException(404, "no splat for this result")
+        return FileResponse(path, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
+
     @app.post("/api/jobs/{jid}/calibrate")
     def calibrate(jid: str, req: CalibrateRequest):
         job_or_404(jid)

@@ -13,7 +13,7 @@ export interface Report {
   warnings: string[];
   seconds: number;
   alignment?: { registered: number; total: number; reprojection_px: number; phone_pose_rms_mm: number | null };
-  model: { vertices: number; faces: number; dimensions_mm: [number, number, number]; watertight: boolean };
+  model: { vertices: number; faces: number; dimensions_mm: [number, number, number]; watertight: boolean; textured?: boolean; splat?: boolean };
   compute?: { features: "gpu" | "cpu"; dense: "gpu" | "cpu" };
   photos?: { dropped_blurry: number[]; used: number };
   combined?: { overlap_pct: number; distance_mm: number };
@@ -71,7 +71,7 @@ export interface Info {
   port: number;
   addresses: string[];
   hostname: string;
-  tools: { openmvs: boolean; colmap_cuda: boolean; gpu: string | null; installing: boolean;
+  tools: { openmvs: boolean; colmap_cuda: boolean; splat?: boolean; gpu: string | null; installing: boolean;
     install_progress: { component: string; done: number; total: number } | null; install_error: string | null };
   presets: { quality: Quality[]; profiles: Profile[]; formats: string[]; units: string[] };
   demo_running: boolean;
@@ -118,6 +118,7 @@ export const api = {
   deleteJob: (id: string) => call(`/api/jobs/${id}`, { method: "DELETE" }),
   log: (id: string) => fetch(`${BASE}/api/jobs/${id}/log`).then((r) => r.text()),
   modelUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/model.glb`,
+  splatUrl: (job: Job) => `${BASE}/api/jobs/${job.id}/splat.ply`,
   calibrate: (id: string, scale: number) => post<Job>(`/api/jobs/${id}/calibrate`, { scale }),
   exportJob: (id: string, formats: string[], units: string | null, textured: boolean) =>
     post<ExportResult>(`/api/jobs/${id}/export`, { formats, units, textured }),

@@ -3,10 +3,12 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-export type ViewMode = "textured" | "clay" | "wire";
+export type ViewMode = "textured" | "clay" | "wire" | "splat";
 
 interface Props {
   url: string;
+  /** Gaussian splat of the same result (same frame as the model), shown in "splat" mode. */
+  splatUrl?: string | null;
   mode: ViewMode;
   grid: boolean;
   theme: string;
@@ -26,10 +28,12 @@ interface Scene {
   marks: THREE.Group;
   points: THREE.Vector3[];
   render: () => void;
+  live: { on: boolean }; // keep rendering every frame (splats are re-sorted as the view moves)
+  splat: { url: string; viewer: THREE.Object3D & { dispose?: () => Promise<void> } } | null;
 }
 
 /** three.js viewport: orbit, textured / clay / wireframe, ground grid in real units, two-point measure. */
-export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) {
+export function Viewer({ url, splatUrl, mode, grid, theme, measuring, onMeasure }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const state = useRef<Scene | null>(null);
   const measuringRef = useRef(measuring);
@@ -58,8 +62,9 @@ export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) 
     controls.dampingFactor = 0.12;
 
     let frame = 0;
+    const live = { on: false };
     const tick = () => {
-      if (controls.update()) frame = requestAnimationFrame(tick);
+      if (controls.update() || live.on) frame = requestAnimationFrame(tick);
       renderer.render(scene, camera);
     };
     const render = () => {
@@ -75,7 +80,7 @@ export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) 
     };
     const ro = new ResizeObserver(resize);
     ro.observe(el);
-    const s: Scene = { renderer, scene, camera, controls, model: null, grid: null, originals: new Map(), marks, points: [], render };
+    const s: Scene = { renderer, scene, camera, controls, model: null, grid: null, originals: new Map(), marks, points: [], render, live, splat: null };
     state.current = s;
 
     // a click that did not drag picks a point while measuring
@@ -101,7 +106,9 @@ export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) 
     resize();
     return () => {
       ro.disconnect();
+      live.on = false;
       cancelAnimationFrame(frame);
+      void s.splat?.viewer.dispose?.();
       controls.dispose();
       renderer.dispose();
       el.removeChild(renderer.domElement);
@@ -155,7 +162,7 @@ export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) 
     const dark = theme === "dark";
     const clay = new THREE.MeshStandardMaterial({ color: dark ? 0xb4b7bb : 0xa3a6aa, roughness: 0.85, metalness: 0 });
     const wire = new THREE.MeshBasicMaterial({ color: dark ? 0xd2f24a : 0x3d4a00, wireframe: true });
-    s.originals.forEach((orig, mesh) => { mesh.material = mode === "textured" ? orig : mode === "clay" ? clay : wire; });
+    s.originals.forEach((orig, mesh) => { mesh.material = mode === "textured" || mode === "splat" ? orig : mode === "clay" ? clay : wire; });
     if (s.grid) { s.scene.remove(s.grid); s.grid.dispose(); s.grid = null; }
     if (grid) {
       const r = s.model.userData.radius as number;
@@ -166,6 +173,31 @@ export function Viewer({ url, mode, grid, theme, measuring, onMeasure }: Props) 
     s.render();
     return () => { clay.dispose(); wire.dispose(); };
   }, [mode, grid, theme, status]);
+
+  // splat mode: the Gaussian splat replaces the mesh on screen (measuring still picks on the mesh)
+  useEffect(() => {
+    const s = state.current;
+    if (!s || status !== "ready" || !s.model) return;
+    const show = mode === "splat" && !!splatUrl;
+    s.model.visible = !show;
+    if (s.splat) s.splat.viewer.visible = show;
+    s.live.on = show;
+    s.render();
+    if (!show || (s.splat && s.splat.url === splatUrl)) return;
+    let cancelled = false;
+    (async () => {
+      const GS = await import("@mkkellogg/gaussian-splats-3d");
+      if (cancelled || !state.current) return;
+      if (s.splat) { s.scene.remove(s.splat.viewer); await s.splat.viewer.dispose?.(); }
+      const viewer = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false });
+      await viewer.addSplatScene(splatUrl!, { showLoadingUI: false, progressiveLoad: false });
+      if (cancelled || !state.current) { await viewer.dispose(); return; }
+      s.splat = { url: splatUrl!, viewer };
+      s.scene.add(viewer);
+      s.render();
+    })().catch(() => { /* no splat for this result: the mesh stays hidden behind an empty view */ });
+    return () => { cancelled = true; };
+  }, [mode, splatUrl, status]);
 
   // leaving measure mode clears the picked points
   useEffect(() => {

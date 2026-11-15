@@ -18,6 +18,7 @@ dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "zeroconf",
+  "uv",  # fetches the Python + PyTorch of the surfel engine (tools.install_splat)
 ]
 
 [project.optional-dependencies]

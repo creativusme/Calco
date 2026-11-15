@@ -6,8 +6,8 @@ if not exist engine\.venv\Scripts\python.exe (
   python -m venv engine\.venv || goto :fail
   engine\.venv\Scripts\python -m pip install -e engine || goto :fail
 )
-rem OpenMVS and (with an NVIDIA card) the GPU engine: downloaded once, here, not from a button later
-engine\.venv\Scripts\python -m calco tools install
+rem OpenMVS, the GPU engine and the splat engine are downloaded once by the engine itself on start,
+rem with progress shown in the app (no download buttons)
 if not exist desktop\dist\index.html (
   echo First run: building the desktop UI...
   pushd desktop && call npm install && call npm run build && popd
