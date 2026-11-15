@@ -11,6 +11,8 @@ Legenda: ☐ da fare · scrivi a fianco OK / KO e una nota.
 - ☐ **A14** Wi-Fi bloccato da Windows: **How to fix** mostra ora il comando completo, con i percorsi interi, e il pulsante **Copy Command**. Incollalo in PowerShell aperto come amministratore: deve finire senza errori, poi **I Ran It · Check Again**.
 - ☐ **A15** **Scan Mat → Markers PDF**: il testo della barra da 100 mm non si sovrappone più ai riquadri dei marker.
 - ☐ **A16** La pagina GitHub del progetto ha il link **Download the latest iPhone app**: scarica l'ultima IPA senza passare da Actions.
+- ☐ **A17** (app iPhone) Dopo **Place box** compare una **semisfera di tasselli** attorno all'oggetto: due fasce (bassa e alta). Girando e scattando, i tasselli di quella direzione diventano verde lime; l'anello piccolo con la percentuale resta in alto. Dopo **Flip** la semisfera sparisce e torna col nuovo **Place box**.
+- ☐ **A18** Finestra nativa: dal README scarica **Calco-desktop-setup.exe** e installalo. Avvia una volta `Start Calco.cmd` e chiudilo; poi apri **Calco** dal menu Start: si apre in una finestra sua e avvia il motore da solo (le scansioni sono le stesse).
 
 ## F. Elaborazione
 

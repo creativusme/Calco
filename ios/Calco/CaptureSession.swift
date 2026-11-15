@@ -13,7 +13,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     @Published var isRecording = false
     @Published var hint = "Aim at the object and tap Place box"
     @Published var warning: String?
-    @Published var coverage = [Bool](repeating: false, count: CaptureSession.sectors * 2)
+    @Published var coverage = [Bool](repeating: false, count: CaptureSession.sectors * 2) {
+        didSet { paintDome() }
+    }
     @Published var cropBox: CropBox?
     @Published var objectSize: Float
     @Published var hasLiDAR = false
@@ -60,6 +62,8 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     private var focus: simd_float3?
     private var sideBoxes: [Int: CropBox] = [:]  // crop box of each finished side
     private var boxNode: SCNNode?
+    private var domeNode: SCNNode?  // coverage hemisphere around the box, one tile per coverage cell
+    private var domeTiles: [SCNNode] = []
     private let created = Date()
     private let haptic = UIImpactFeedbackGenerator(style: .rigid)
 
@@ -135,6 +139,9 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         cropBox = nil
         boxNode?.removeFromParentNode()
         boxNode = nil
+        domeNode?.removeFromParentNode()
+        domeNode = nil
+        domeTiles = []
         focus = nil
         shotPositions.removeAll()
         coverage = [Bool](repeating: false, count: Self.sectors * 2)
@@ -289,6 +296,57 @@ final class CaptureSession: NSObject, ObservableObject, ARSessionDelegate {
         boxNode = Self.makeBox(size: s)
         boxNode?.simdPosition = simd_float3(base.x, base.y + s / 2, base.z)
         if let boxNode { sceneView?.scene.rootNode.addChildNode(boxNode) }
+
+        domeNode?.removeFromParentNode()
+        let (dome, tiles) = Self.makeDome(radius: max(0.12, s * 1.15))
+        dome.simdPosition = base
+        domeNode = dome
+        domeTiles = tiles
+        sceneView?.scene.rootNode.addChildNode(dome)
+        paintDome()
+    }
+
+    /// A hemisphere of tiles around the part, in the same cells as `coverage` (low band, high band
+    /// x sectors): a tile turns green once a photo was taken from that direction.
+    private static func makeDome(radius r: Float) -> (SCNNode, [SCNNode]) {
+        let root = SCNNode()
+        var tiles: [SCNNode] = []
+        let n = sectors
+        let bands: [(Float, Float)] = [(4, 35), (35, 72)]  // degrees above the support, split like markCoverage
+        for (e0, e1) in bands {
+            for i in 0..<n {
+                let gap: Float = 0.06
+                let a0 = (Float(i) + gap) / Float(n) * 2 * .pi, a1 = (Float(i + 1) - gap) / Float(n) * 2 * .pi
+                let b0 = (e0 + 1.5) * .pi / 180, b1 = (e1 - 1.5) * .pi / 180
+                func point(_ az: Float, _ el: Float) -> SCNVector3 {
+                    let t = az - .pi  // markCoverage measures atan2(z, x) + pi
+                    return SCNVector3(r * cos(el) * cos(t), r * sin(el), r * cos(el) * sin(t))
+                }
+                let source = SCNGeometrySource(vertices: [point(a0, b0), point(a1, b0), point(a1, b1), point(a0, b1)])
+                let element = SCNGeometryElement(indices: [Int16(0), 1, 2, 0, 2, 3], primitiveType: .triangles)
+                let geometry = SCNGeometry(sources: [source], elements: [element])
+                let m = SCNMaterial()
+                m.lightingModel = .constant
+                m.isDoubleSided = true
+                m.writesToDepthBuffer = false
+                m.diffuse.contents = UIColor.white.withAlphaComponent(0.10)
+                geometry.materials = [m]
+                let node = SCNNode(geometry: geometry)
+                node.renderingOrder = 5
+                root.addChildNode(node)
+                tiles.append(node)
+            }
+        }
+        return (root, tiles)
+    }
+
+    private func paintDome() {
+        guard domeTiles.count == coverage.count else { return }
+        let done = UIColor(red: 0.82, green: 0.95, blue: 0.29, alpha: 0.38)
+        let todo = UIColor.white.withAlphaComponent(0.10)
+        for (tile, covered) in zip(domeTiles, coverage) {
+            tile.geometry?.firstMaterial?.diffuse.contents = covered ? done : todo
+        }
     }
 
     /// Crop box drawn like a viewfinder: thick bright edges, corner brackets, a faint fill.

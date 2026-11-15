@@ -508,6 +508,18 @@ def serve(host: str = "0.0.0.0", port: int = PORT, library: Path | None = None) 
     from .usb import UsbBridge
 
     lib = Library(library)
+    # tell the native desktop app (Tauri) how to start this engine next time
+    import json as _json
+
+    from .tools import tools_dir
+
+    marker = tools_dir().parent / "engine.json"
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(_json.dumps({"python": sys.executable, "cwd": str(Path(__file__).resolve().parents[1])}),
+                          encoding="utf-8")
+    except OSError:
+        pass
     app = create_app(lib, ui, usb=UsbBridge(lib).start(), net=NetWatch().start(), auto_install=True)
     zc = None  # discovery removed: the phone connects with the network code and password
     print(f"Calco engine {__version__} on http://localhost:{port}  (phone: {', '.join(lan_addresses()) or 'no LAN address'})")

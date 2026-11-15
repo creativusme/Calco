@@ -19,6 +19,8 @@ Double-click **`Start Calco.cmd`**. The first run creates the Python environment
 
 Try it without a phone: **Create a demo capture**, then **Process**.
 
+Optional native window: **[Calco-desktop-setup.exe](https://github.com/creativusme/Calco/releases/download/desktop-latest/Calco-desktop-setup.exe)** (built by GitHub Actions). Start the engine once with `Start Calco.cmd`; after that the app starts it by itself.
+
 ```bash
 # the same, by hand
 cd engine && python -m venv .venv && .venv\Scripts\python -m pip install -e .[dev]
@@ -32,7 +34,7 @@ cd engine && python -m venv .venv && .venv\Scripts\python -m pip install -e .[de
 
 Scans reach the computer in two ways: **by cable** (plug the iPhone in with Calco open on both; the computer pulls what is missing through Apple's USB service, nothing to configure) or **over Wi-Fi** (needs Windows to accept incoming connections: Calco on the computer tells you when it does not and how to fix it, `tools/allow-wifi.ps1`).
 
-**[Download the latest iPhone app (Calco-unsigned.ipa)](https://github.com/creativusme/Calco/releases/latest/download/Calco-unsigned.ipa)**, then sign and install it with Sideloadly or AltStore. Needs an iPhone with LiDAR (12 Pro or later) and iOS 17.
+**[Download the latest iPhone app (Calco-unsigned.ipa)](https://github.com/creativusme/Calco/releases/download/ios-latest/Calco-unsigned.ipa)**, then sign and install it with Sideloadly or AltStore. Needs an iPhone with LiDAR (12 Pro or later) and iOS 17.
 
 There is no Mac in this project: GitHub Actions builds the unsigned IPA on every change (`.github/workflows/ios.yml`) and publishes it as the latest release, so the link above is always the newest build.
 

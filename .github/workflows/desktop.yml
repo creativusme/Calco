@@ -1,0 +1,44 @@
+name: Desktop app
+
+on:
+  push:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # to publish the installer as a release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install UI dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Build the native app (Tauri, NSIS installer)
+        working-directory: desktop
+        run: npx tauri build
+      - name: Collect the installer
+        shell: bash
+        run: |
+          exe=$(ls desktop/src-tauri/target/release/bundle/nsis/*.exe | head -1)
+          cp "$exe" Calco-desktop-setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Calco-desktop-setup
+          path: Calco-desktop-setup.exe
+      - name: Publish (download link in the README)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete desktop-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create desktop-latest Calco-desktop-setup.exe --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Calco for Windows (native window)" --latest=false \
+            --notes "Native window for Calco, built from ${GITHUB_SHA::7}. The engine still runs from the Calco folder: start it once with Start Calco.cmd, then this app finds it by itself."

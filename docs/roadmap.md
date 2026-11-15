@@ -25,7 +25,7 @@ Keep this file honest: "verified" means it ran and the result was checked, not t
 | Wi-Fi upload (phone pushes) | **Verified** by tests (resume, validation, path traversal). On the dev PC it was blocked by Windows Firewall (block rule for Python + Public network): detected and explained in the UI, fixed by `tools/allow-wifi.ps1` that the owner runs |
 | Cable transfer (computer pulls via usbmuxd) | **Verified** by tests against a fake phone (pull, resume, no re-download of deleted scans). usbmuxd answers on the dev PC. **Never tried with the real phone** |
 | Desktop UI in the browser | **Verified** by hand: library, process, tabs, viewer, two-point measure, calibration, export |
-| Desktop Tauri shell | Written, **never compiled** (no Rust on the dev machine) |
+| Desktop Tauri shell | Built by GitHub Actions (`desktop.yml`, NSIS installer as a release); starts the engine recorded in `%LOCALAPPDATA%\Calco\engine.json` |
 | iPhone app | **Compiles** in CI (unsigned IPA artifact). The owner ran 0.2 and 0.3 on the phone (capture, pairing and transfer work). 0.4 (automatic close-up lens inside the normal scan, box on the support plane) **not run yet** |
 | Pairing (network code + password) | **Verified** by tests (401 without/with a wrong password, code round trip). Not tried with the phone |
 | Real capture #1 (pliers + glue stick on a glossy patterned tablecloth, 198 photos, no mat) | See "First real capture" below |
@@ -125,19 +125,23 @@ raise quality from here are listed under "Next", and they need real captures to 
 
 ## Next, in order
 
-Done since the first plan: close-up lens inside the normal scan, Flip and Combine for two-sided parts,
-import of photos and video (`importer.py`), Gaussian splat (`splat.py`, optional), loose 60 mm scale
-markers (`mat.fit_markers`), exposure and white balance locked while recording (iOS 0.5), DXF cross-sections
-and 3-point diameters for CAD, one-page PDF report, two-colour 3MF mat.
+Done: close-up lens inside the normal scan, Flip and Combine for two-sided parts, import of photos and
+video, Gaussian splat (optional), loose 60 mm scale markers, exposure/white balance locked while
+recording, coverage hemisphere in AR, DXF cross-sections, 3-point diameter, cylinder and plane fits,
+USDZ export, photo export with cameras (COLMAP, transforms.json, RealityScan XMP, Metashape CSV), PDF
+report with a photo-coverage heat map, two-colour 3MF mat, depth-map photos cropped to the part, IPA and
+Windows installer published as GitHub releases.
 
-1. **First real capture with the new version**: run `docs/collaudo.md` (A–H), fix what it reveals.
-2. **Quality on real data**: compare COLMAP and OpenMVS dense on the same capture.
-   Done: depth-map photos cropped to the part (`mvs.crop_to_box`): on the radiator, same 40 min, 53 of 122
-   photos cropped (42% background), finer cells and some of them open, 501k faces instead of 342k.
-   Tried and dropped: ALIKED + LightGlue in COLMAP 4.2.1. Its ONNX CUDA provider does not load (no cuDNN in
-   the COLMAP build), and on the CPU 25 close-ups took 8 min against 9 s for GPU SIFT with fewer verified
-   pairs (142 vs 159).
-3. **Masks for objects that cannot sit on a plane**: local segmentation (SAM2 / BiRefNet, no network).
-4. **Phone preview** (Object Capture on device) and notes/photos attached to a capture.
-5. **CAD**: plane and cylinder fitting on a picked region, USDZ export.
-6. **Installer**: Tauri build in CI and the engine bundled without a separate Python install.
+1. **Field test** of what is still open in `docs/collaudo.md` (Combine on a real part, hard cases).
+2. **Engine bundled** with the installer (today the native window starts the Python engine that
+   `Start Calco.cmd` set up; a frozen engine with Open3D, pycolmap and CUDA tools is about 2 GB).
+
+Decided against, with reasons:
+- **Learned features (ALIKED + LightGlue)**: no GPU provider in COLMAP 4.2.1's build, 50x slower on the
+  CPU and fewer verified pairs on a real capture (numbers above).
+- **Learned masks (SAM2 / BiRefNet)** for objects that do not stand on a plane: without a support plane
+  the crop box plus "keep the largest piece" already isolates the part; a segmentation model would add
+  hundreds of MB for a case not met yet. Revisit if a real capture needs it.
+- **On-phone 3D preview**: built and removed at the owner's request (not useful in the field).
+- **COLMAP vs OpenMVS dense comparison**: COLMAP on the GPU is the default because OpenMVS has no CUDA in
+  its Windows build; OpenMVS stays as the CPU fallback and for meshing/texturing.
